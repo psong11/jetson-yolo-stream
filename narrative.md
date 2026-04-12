@@ -6,92 +6,92 @@ Teaching a small computer to see.
 
 ## April 12, 2026 — First Light
 
-There's a little computer on my desk. Eight gigs of RAM, a thousand CUDA cores, and an ARM chip the size of a postage stamp. I flashed it back in February and left it alone for six weeks.
+There's a small computer sitting on my desk that I haven't touched in six weeks. Eight gigabytes of RAM, a thousand CUDA cores, an ARM processor the size of a postage stamp. The Jetson Orin Nano. I flashed it with an operating system back in February — connected it to WiFi, confirmed I could SSH into it from my MacBook, and then set it aside while life moved forward without it.
 
-Today I plugged it back in.
+Today I came back to it. Not because anything changed, but because I was ready.
 
----
+The whole idea is to build something that can see. Not a webcam that records — something that perceives. That takes in light and names what it finds. A manufactured eye.
 
-SSH in. Password. Blinking cursor. It's alive.
-
-209 gigs of empty NVMe. CUDA installed but invisible — the compiler was there, the shell just didn't know where to look. Added it to PATH. One line in `.bashrc` and suddenly the machine knows what it's capable of.
-
-There's something in that. You have the tools but you can't find them. One line fixes it.
+The second law of thermodynamics says everything tends toward disorder. Entropy always wins. Heat dissipates, structures decay, signals dissolve into noise. And yet here I am, trying to move in the opposite direction — taking raw silicon and copper and ribbon cable and arranging it into something that can look at a room and say *person, laptop, chair.* Order from chaos. Which, if you think about it, is the oldest story there is.
 
 ---
 
-PyTorch was a journey.
+The first thing you do with any machine is ask if it's alive. SSH from the MacBook. Password. A blinking cursor on a dark terminal. Ubuntu 22.04, kernel intact, 209 gigabytes of empty NVMe drive waiting for purpose.
 
-On a normal computer you `pip install torch` and go make coffee. On a Jetson you can't. ARM chip. The binaries that work on every other computer in the world? Useless here. You need NVIDIA's build, compiled specifically for this hardware, hosted on their own server.
+CUDA was installed but the shell couldn't find it. The compiler existed somewhere on disk, but the system had never been told where to look. I added one line to `.bashrc` — a PATH variable pointing to the right directory — and suddenly the machine knew what it was capable of. The tools were always there. It just needed to be shown where they were.
 
-The address is `pypi.jetson-ai-lab.io`. I tried `.dev` first. Doesn't exist. Tried `.com`. Also doesn't exist. `.io` does.
+PyTorch was harder. On any normal computer you install it with a single command. On the Jetson you can't, because the chip is ARM — a different architecture than the x86 processors that power almost every laptop and desktop in the world. The binaries that work everywhere else are useless here. You need a special build, compiled by NVIDIA specifically for this hardware, hosted on a server most people will never visit.
 
-Two wrong URLs. Forty-five minutes. One right URL.
+I tried two wrong URLs before finding the right one. `pypi.jetson-ai-lab.dev` — doesn't exist. `.com` — doesn't exist. `.io` — that's the one. Forty-five minutes of debugging for three characters of domain name.
 
-Then PyTorch imported and immediately crashed. Missing library: `libcudss.so.0`. A sparse solver library that JetPack doesn't ship but PyTorch 2.11 demands. Downloaded a tarball. Extracted it. Copied `.so` files by hand.
+Then PyTorch installed, and immediately crashed on import. A missing library called `libcudss.so.0` — a sparse math solver that JetPack doesn't include but that PyTorch 2.11 quietly demands. I downloaded a tarball from NVIDIA's redistribution server, extracted the shared object files, and copied them into the CUDA library path by hand.
 
 ```
 python3 -c "import torch; print(torch.cuda.is_available())"
 True
 ```
 
-An hour and a half of work. Four characters of output.
+True.
+
+There's a disproportionality in this work that I'm learning to sit with. Ninety minutes of troubleshooting libraries and paths and missing dependencies, and the payoff is a single boolean. But that boolean means the GPU is awake. It means a thousand cores are listening. Everything that comes after depends on this word.
 
 ---
 
-Tested YOLO on a stock photo. Bus on a street. Four persons, one bus, 203 milliseconds. All tensors on `cuda:0`.
+I tested YOLO on a stock image first — a bus on a street somewhere. The model found four people and one bus in 203 milliseconds. All the tensors lived on `cuda:0`, which is the system's way of saying the computation happened on the GPU, not the CPU. The brain was working.
 
-The GPU was awake.
+Then I built a streaming pipeline. Two scripts — one runs on the Jetson and waits for frames, the other runs on my MacBook, captures the webcam, compresses each frame to JPEG, and sends it across the room over WiFi. The Jetson runs YOLO on every frame and sends back a list of what it found. The MacBook draws bounding boxes around the objects and displays the feed.
 
-Built a streaming pipeline next. Server on the Jetson, client on the MacBook. Webcam captures a frame, compresses it to JPEG, shoots it over WiFi, Jetson runs YOLO, sends back a JSON of what it saw. TCP sockets. Length-prefixed messages. The dumbest possible protocol that actually works.
+Two machines. One sees, the other thinks. They communicate through a TCP socket on port 9999 — an arbitrary number, chosen for no reason, that both sides agree on. That's all a protocol really is. An agreement.
 
-5.7 FPS. Slow. But it worked. My webcam was being interpreted by a computer across the room. Bounding boxes on objects it's never seen in my apartment.
+5.7 frames per second. Not fast. But real. My webcam was being perceived by a computer across the room, and names were appearing on things — person, TV, laptop — objects it had never encountered in my specific apartment but recognized anyway because someone, somewhere, trained this model on thousands of images of thousands of objects, and the patterns generalized.
 
-Person. TV. Laptop.
+That's the strange miracle of neural networks. They don't memorize. They abstract. They see enough couches to learn what couch-ness looks like, and then they find it in rooms they've never been in.
 
 ---
 
 Then I plugged in the camera.
 
-ArduCam UC-873. IMX519 sensor. 16 megapixels through a CSI ribbon cable thinner than a shoelace.
+ArduCam UC-873 Rev D. An IMX519 sensor — 16 megapixels of Sony silicon connected to the Jetson through a CSI ribbon cable thinner than a shoelace. I powered the Jetson down, seated the cable into the connector, flipped the latch, and booted back up.
 
-`/dev/video0` appeared. System saw the hardware. Took a picture.
+`/dev/video0` appeared in the filesystem. The system recognized that something new was attached. I took a picture.
 
-Green.
+The image was entirely green.
 
-Not green like a forest. Green like a wall of pure emerald nothing. Every pixel.
+Not green like grass. Not green like anything in the physical world. A flat, pure, emerald void. Every pixel, every channel.
 
-The camera was outputting raw Bayer data — the sensor's native mosaic of red, green, and blue filters — and OpenCV was reading it like a finished image. It wasn't. It was ingredients, not a dish. If words are ingredients, then poetry isn't food, it's a dish. You can't just get to the punchline. You have to cook it.
+What happened: the IMX519 outputs raw Bayer data. This is the native language of a camera sensor — a mosaic of tiny color filters arranged in a repeating pattern of red, green, green, blue across millions of pixels. Half of them are green, because human eyes are most sensitive to green light, so camera engineers allocate more pixels to it. When software reads that mosaic without processing it, all it sees is green.
 
-Half the pixels on any camera sensor are green. That's the Bayer pattern. Two greens for every red and blue, because human eyes are most sensitive to green. When you read that raw data without processing it, you get a green screen. The camera was seeing fine. The software was illiterate.
+The camera was capturing reality just fine. The software was looking at the data and had no idea what it meant.
 
----
+This is the part that made me pause. A sensor that can resolve 16 million pixels of light was producing perfect data, and it came out as a wall of green because the thing reading it didn't have the right framework to interpret what it was receiving. The information was all there. The understanding was not.
 
-Four green screens later I found the fix.
-
-NVIDIA's ISP. Image Signal Processor. Dedicated silicon on the Jetson that does what your retina does — takes raw light and makes it mean something. Debayering. White balance. Exposure. The translation from photons to color.
-
-`nvarguscamerasrc` — that's the GStreamer element that talks to the ISP. I threaded it into a pipeline: sensor → ISP → format converter → color converter → OpenCV. Each step transforms the data. Like a sentence translated through four languages before it arrives in one you understand.
-
-But. The OpenCV I'd installed from pip didn't speak GStreamer. Wrong build. Generic. Had to throw it away, install the system OpenCV, then downgrade NumPy because the old OpenCV couldn't talk to the new NumPy.
-
-Every layer in this stack was built by different people, at different times, for different assumptions about what hardware it would run on. Getting them to agree is the actual work.
+I think about how often that's true in general.
 
 ---
 
-Then it worked.
+The fix took four green screens to find.
 
-A lamp. Warm amber light against a ceiling. Out of focus. The ISP had just woken up. Autofocus hadn't settled. Exposure still adjusting. But the colors were real.
+The answer was NVIDIA's ISP — the Image Signal Processor. Dedicated hardware on the Jetson that takes raw sensor data and does what biology does behind your cornea. Debayering — interpolating full color from the partial mosaic. White balance — adjusting for the color temperature of ambient light. Exposure correction. The entire pipeline that converts a grid of filtered photon counts into something that looks like the world.
 
-Photons traveled from a lightbulb through a lens onto a 16-megapixel sensor, got read as 10-bit Bayer, processed through dedicated silicon, converted through four format stages, and landed as a JPEG on an NVMe drive.
+`nvarguscamerasrc` is the GStreamer element that invokes the ISP. I chained it into a pipeline — sensor to ISP to format converter to color space converter to OpenCV — each stage transforming the data from one representation to another. Raw Bayer becomes NV12 becomes BGRx becomes BGR. Four translations before the image arrives in a language that YOLO can read.
 
-First properly seen image.
+But the OpenCV I had installed from pip didn't support GStreamer. It was a generic build, compiled for generic hardware, with no knowledge of the NVIDIA-specific tools on this board. I had to uninstall it and use the system OpenCV that shipped with JetPack — an older version, but one that was built here, for this hardware, with the right integrations. Then NumPy was too new for the old OpenCV. Downgraded that too.
 
-`first_light.jpg`.
+Every layer in this stack was written by different engineers, in different years, with different assumptions about what would be running beneath and above them. The work of edge computing is not just making things run. It's making things agree.
+
+---
+
+And then, after all of that, the pipeline produced an image.
+
+A lamp. Warm amber light spilling against a ceiling. Soft, out of focus — the autofocus hadn't settled yet, the ISP was still calibrating its exposure. But the colors were real. Not green. Not raw. Real.
+
+Photons had traveled from a tungsten filament through a glass shade, through a plastic lens, onto a 16-megapixel sensor where they were converted into electrons, read as 10-bit Bayer values, passed through dedicated silicon that interpolated color and corrected for light temperature, piped through four software format conversions, and written as a JPEG to an NVMe drive bolted to a board the size of my palm.
+
+From light to meaning. That's what an eye does.
 
 ![First Light](first_observations/first_light.jpg)
 
-Connected YOLO. Detections started streaming.
+I connected YOLO. The detections started.
 
 ```
 [FPS: 22.1] person (0.92)
@@ -101,25 +101,25 @@ Connected YOLO. Detections started streaming.
 [FPS: 24.8] laptop (0.69), mouse (0.57)
 ```
 
-23.7 frames per second. Four times faster than the WiFi streaming. No network, no MacBook, no middleman. Just a camera and a GPU and 80 classes of objects it learned to recognize from a dataset it's never seen my apartment in.
+23.7 frames per second. Four times faster than the WiFi streaming setup. No network. No MacBook. No middleman. Just a camera and a GPU and a model trained on 80 classes of objects, running inference on a room it's never been in.
 
 ![First Detection](first_observations/first_detection.jpg)
 
-It doesn't know what these things are. It knows what they look like. Different thing entirely.
+I pointed it around the room. It found me — person, 92% confidence. It found my laptop, my TV, my mouse. When I held up my phone it hesitated. Sometimes "cell phone," sometimes nothing. The model has 80 categories and not everything in my life maps neatly onto them.
 
-I pointed it around the room. It tracked me when I moved. Found my laptop at 90% confidence. Saw the TV on the wall. Couldn't decide what my phone was. The model was trained on 80 common objects and not everything in my room maps neatly onto those categories.
-
-But it was seeing. Blurry, imperfect, confident about some things and uncertain about others. Like anything that just opened its eyes.
+But it was seeing. Blurry, imperfect, confident about some things and genuinely uncertain about others. Naming what it could. Staying silent about what it couldn't.
 
 ---
 
 ### What's on the desk now
 
-A Jetson Orin Nano with a CSI camera, running YOLO at 24 frames per second, detecting objects in real time with no internet, no cloud, no laptop. A self-contained eye.
+A Jetson Orin Nano with a 16-megapixel CSI camera, running YOLO at 24 frames per second, detecting objects in real time with no internet connection, no cloud API, no laptop in the loop. A self-contained eye.
 
-It doesn't understand yet. It recognizes. Understanding comes later — tracking objects over time, learning that a person who leaves a room is the same person who entered it. Right now it sees each frame with no memory of the one before.
+It doesn't understand anything. It recognizes. Understanding would mean knowing that the person who left the frame is the same person who entered it. That the laptop on the desk is the same laptop that was there yesterday. That nighttime looks different than morning but the room hasn't changed. It has none of that yet.
 
-But the scaffolding is there. Camera works. ISP processes. GPU infers. Software connects.
+But the scaffolding is in place. The sensor captures. The ISP translates. The GPU infers. The software connects them. And the whole thing runs on 15 watts.
+
+From formless silicon to something that sees. Against entropy. Toward order.
 
 Tomorrow I'll teach it to remember.
 
@@ -128,9 +128,9 @@ Tomorrow I'll teach it to remember.
 | What | Value |
 |------|-------|
 | Time from first SSH to first detection | ~3 hours |
-| Wrong URLs tried for PyTorch | 2 |
-| Missing libraries manually installed | 1 |
-| Green screens before ISP worked | 4 |
+| Wrong URLs tried | 2 |
+| Missing libraries installed by hand | 1 |
+| Green screens before the ISP worked | 4 |
 | Final FPS | 23.7 |
-| Objects it can recognize | 80 |
+| Objects it recognizes | 80 |
 | Objects it will learn to recognize | TBD |
