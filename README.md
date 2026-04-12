@@ -8,9 +8,11 @@ A standalone AI vision system running entirely on edge hardware. A CSI camera fe
 
 There's also a network streaming mode that lets you use a MacBook webcam as the camera source over WiFi.
 
-## First Observations
+## The Story
 
-The machine's very first images are in [`first_observations/`](first_observations/first_observations_of_the_world.md).
+Read [`narrative.md`](narrative.md) for the full account of building this — the wrong URLs, the green screens, the moment the ISP pipeline finally produced real color, and what it felt like to watch a machine see for the first time.
+
+The machine's first images are in [`first_observations/`](first_observations/first_observations_of_the_world.md).
 
 ## Hardware
 
@@ -96,6 +98,7 @@ Press `q` to quit.
 
 ```
 jetson-yolo-stream/
+├── narrative.md             # The build story — updated each session
 ├── detect_local.py          # Standalone Jetson: CSI camera + YOLO (primary)
 ├── server.py                # Jetson: receives frames over TCP, runs YOLO
 ├── client.py                # MacBook: captures webcam, sends to Jetson, displays results
