@@ -11,5 +11,5 @@ __pycache__/
 # OS files
 .DS_Store
 
-# Test images
+# Test images (but keep first_observations/)
 test.jpg
