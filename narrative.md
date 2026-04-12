@@ -91,8 +91,6 @@ First properly seen image.
 
 ![First Light](first_observations/first_light.jpg)
 
----
-
 Connected YOLO. Detections started streaming.
 
 ```
