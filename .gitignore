@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# YOLO model weights (large binary files — don't commit)
+*.pt
+*.onnx
+*.engine
+
+# OS files
+.DS_Store
+
+# Test images
+test.jpg
