@@ -134,3 +134,111 @@ Tomorrow I'll teach it to remember.
 | Final FPS | 23.7 |
 | Objects it recognizes | 80 |
 | Objects it will learn to recognize | TBD |
+
+---
+
+## April 16, 2026 — What You Can't Reach
+
+Four days later. Same desk, same camera, same ribbon cable. I plugged the Jetson in, watched the green LED come up, SSHed into it from my laptop, and took a picture.
+
+The picture was bad. Dark, warm-tinted, a face half-swallowed in shadow.
+
+Before I could worry about what was in the frame I had to understand what went wrong with the capture itself.
+
+---
+
+Every camera sensor powers on blind. It doesn't know how bright the room is, or what color the light is, or what to do about either. The ISP runs a loop. Capture a frame. Measure it. Adjust shutter, gain, white balance. Capture another. Adjust again. After thirty frames or so the numbers stabilize and the image begins to look like the world looks.
+
+The first frame is what the sensor sees before any of that settles. You get whatever reached the silicon at the instant it woke up.
+
+Fix: take thirty frames, keep the last one. Exposure snapped into place. Color followed.
+
+But the picture was still blurry.
+
+---
+
+The ArduCam has autofocus. A tiny electromagnet inside the lens module slides the optical element forward and backward on an invisible rail. Hold the camera up to your ear and shake it — a faint rattle, a half-millimeter of motion in a part that's supposed to move.
+
+That mattered. It meant the thing that moves the lens wasn't broken. It just wasn't listening to me.
+
+I spent the next four hours trying to figure out why.
+
+---
+
+The motor is driven by a small chip on the camera board that speaks a two-byte language over an I2C bus — the same low-speed serial protocol that carries most of the housekeeping traffic on embedded hardware. Power up. Send a ten-bit number packed into two bytes. The electromagnet pulls. The lens moves.
+
+I found the chip's address by accident. When the camera is idle the chip is electrically invisible — its voltage regulator sits dark, and it doesn't respond to the bus. Only when the sensor above it is actively streaming does the regulator come up, and only then does the chip appear on the bus at address 0x0c. A whole peripheral that exists or doesn't exist depending on whether something else is awake.
+
+I wrote a script. Start a streaming pipeline in the background, sweep the focus value across the lens's full range, capture a frame at each step. Seven photos. In a working system the first and last should look unrelated — one focused near infinity, the other near macro, with everything at the wrong distance blurred into smear.
+
+They came back identical. Same softness, same wash. The lens hadn't moved.
+
+---
+
+The I2C writes succeeded, technically. Every command returned success. The bytes went out onto the wire. Something at the other end was either ignoring them or overwriting them within milliseconds — probably NVIDIA's Argus stack, the closed-source layer that owns the sensor and its accessories while streaming and has its own opinion about where the focus should be.
+
+I pulled ArduCam's official focus tool to see how they do it. The relevant function was one line:
+
+```python
+os.system("v4l2-ctl -d {} -c focus_absolute={}".format(self.dev, value))
+```
+
+They don't use I2C. They use a kernel control — a V4L2 knob called `focus_absolute` that a proper driver would expose. I ran it on my Jetson. It returned:
+
+```
+unknown control 'focus_absolute'
+```
+
+The driver I installed on day one supports streaming. It does not expose focus. A different driver from the same vendor does, but installing it means replacing the one currently working, and there is no guarantee the new one will work on my exact JetPack version, and recovery from a broken install is a reflash.
+
+---
+
+The voice-coil motor is a centimeter from my sensor. It's wired to a chip whose address I know. The chip speaks a protocol that's on Wikipedia. And I can't reach it.
+
+Not because the hardware is broken. Because the software above the hardware has decided what I'm allowed to touch. The driver is the interpreter between what's physically there and what I can ask for in code. If the driver doesn't expose a control surface, the thing behind it might as well not exist.
+
+Most of the locked doors in computing are like this. You can hold them in your hand and still not open them without the right key, and the right key is another five hours of installation work, and the installation might leave you worse off than you started.
+
+---
+
+There was a moment, somewhere in hour three, when the obvious move appeared. Install the other driver. Reboot. Get focus. Move on.
+
+I didn't take it. Partly because the risk — the camera is currently working and I don't want it not to be — outweighs the reward. Mostly because YOLO doesn't need sharp images.
+
+That's a useful thing to know about computer vision. The model doesn't perceive the world the way I do. It doesn't need a crisp edge to find a person or a laptop or a chair. The features it attends to are coarser than what my eye cares about. It can work with softness, with noise, with motion blur that would make a photographer wince.
+
+Aesthetic failure and detection failure are not the same thing.
+
+My camera takes ugly pictures of people. It also knows which pixels are a person. Those are two different problems and only one of them needed solving tonight.
+
+---
+
+I did one more thing before I stopped.
+
+I taught Claude to SSH into the Jetson directly. For weeks I've been copying commands between two terminal windows — the model tells me what to type, I type it, I paste the output back. Slow. Error-prone. A meaningful fraction of the work was bookkeeping between human and machine.
+
+Now the model runs the commands itself. I authorized an SSH key, added a narrow sudoers entry for a few I2C diagnostics, and wrote a playbook for how it should behave while connected — no destructive operations without asking, no installing packages, no touching `/etc/` or the device tree. The playbook lives in the repo. Future sessions load it automatically.
+
+The distance between a hypothesis and a test collapsed by an order of magnitude. That's a change in how this project runs.
+
+---
+
+### What's on the desk now
+
+Same as four days ago: a Jetson, a camera, a model that runs at twenty-three frames per second.
+
+Plus a pile of knowledge about I2C protocols and VCM drivers and the invisible ownership boundaries inside the Argus stack. Plus one locked door I didn't open. Plus an agent that can now open a terminal on this machine without asking me to read commands to it.
+
+Tomorrow, or the week after, or whenever it matters enough, I'll install the other driver and deal with whatever breaks. Tonight the camera takes the pictures it takes, and the GPU names what it sees in them, and that's enough.
+
+---
+
+| What | Value |
+|------|-------|
+| Hours spent chasing autofocus | ~4 |
+| I2C writes that did nothing | ~50 |
+| Focus values tried | 7 |
+| Drivers that would have fixed it | 1, uninstalled |
+| Pictures taken of text I can't read | 7 |
+| Locked doors walked away from | 1 |
+| SSH sessions required tomorrow | 0 |
