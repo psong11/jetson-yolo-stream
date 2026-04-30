@@ -173,10 +173,38 @@ When in doubt, ask. Blast radius on an SBC is high — bricking the SD card mean
 
 ## 11. First-move checklist for any Jetson session
 
-Before running real work, confirm the environment:
-
 ```bash
-ssh paul@jetson.local 'whoami && uname -r && uptime && df -h / | tail -1 && ls /dev/video0 /dev/i2c-10 2>&1'
+ssh paul@jetson.local '~/bin/jstatus'
 ```
 
-That single line verifies: SSH+key works, correct kernel, load average reasonable, disk not full, camera node present, I2C bus present. One tool call, one clear signal.
+`jstatus` is a script at `~/bin/jstatus` on the Jetson (source of truth: `docs/jstatus.sh` in this repo) that prints a single snapshot of everything you'd otherwise check piecemeal: host/kernel/uptime, disk, thermals, tegrastats (GPU/RAM/power), camera device nodes, any active `nvargus`/`gst-launch`/detect scripts, I2C buses + a bus-10 scan, tmux sessions, and recent captures in `~/snapshots/` and `/tmp/`.
+
+One round-trip, one clear signal. Run it at the start of any session and again after anything non-trivial.
+
+To update the script: edit `docs/jstatus.sh` locally, then `scp docs/jstatus.sh paul@jetson.local:~/bin/jstatus && ssh paul@jetson.local 'chmod +x ~/bin/jstatus'`.
+
+---
+
+## 12. tmux — long-running work on the Jetson
+
+For anything that takes more than a few seconds (captures, TensorRT exports, YOLO runs, debugging) use a tmux session on the Jetson so the process survives SSH disconnects and you can reattach to see live output.
+
+```bash
+# Start (or reuse) a named session and run something inside it
+ssh paul@jetson.local 'tmux new -d -s claude "python3 ~/detect_local.py 2>&1 | tee /tmp/detect.log"'
+
+# Check what's running
+ssh paul@jetson.local 'tmux ls'
+
+# Peek at the pane's current buffer without attaching
+ssh paul@jetson.local 'tmux capture-pane -t claude -p | tail -40'
+
+# Kill it
+ssh paul@jetson.local 'tmux kill-session -t claude'
+```
+
+Conventions:
+- **Session name `claude`** for anything I start. Paul can start his own sessions under different names.
+- **Always `tee` to a file in `/tmp/`** so output survives even if tmux is killed.
+- **Don't attach interactively from the Bash tool** — it has no TTY. Use `capture-pane -p` to read state.
+- `jstatus` reports active tmux sessions in its output — check there first before starting a new one.

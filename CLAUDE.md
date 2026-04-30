@@ -41,7 +41,8 @@ As of 2026-04-16, Paul set up SSH key auth so Claude can run commands on the Jet
 - `client.py` — MacBook side of network streaming mode
 - `docs/architecture.md` — full system architecture with ASCII diagrams
 - `docs/jetson_setup.md` — complete setup reference and version matrix
-- `docs/ssh_jetson.md` — **read before any SSH command to the Jetson** (connection, quote-escaping, background processes, sudo scope, safety)
+- `docs/ssh_jetson.md` — **read before any SSH command to the Jetson** (connection, quote-escaping, background processes, sudo scope, safety, tmux, jstatus)
+- `docs/jstatus.sh` — one-shot Jetson health snapshot (installed on Jetson at `~/bin/jstatus`); run `ssh paul@jetson.local '~/bin/jstatus'` as first move of any session
 - `logs/` — learning journal entries
 - `first_observations/` — the machine's first captured images
 
