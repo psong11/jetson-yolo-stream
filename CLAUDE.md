@@ -4,12 +4,13 @@
 Building a portable AI camera on a Jetson Orin Nano that sees and understands the world.
 This is an educational project — Paul wants step-by-step explanations of everything.
 
-## Current State (2026-04-16)
-- **CSI camera (ArduCam IMX519) working** via GStreamer + nvarguscamerasrc
+## Current State (2026-04-29)
+- **CSI camera (ArduCam IMX519, UC-873 Rev D) working** via GStreamer + nvarguscamerasrc
 - **YOLO11n running locally** at ~23.7 FPS on Jetson GPU at 1920x1080
 - **Network streaming mode** also works (MacBook webcam → Jetson → MacBook) at ~5.7 FPS
 - **TensorRT not yet used** — could boost FPS further
-- **Autofocus deferred.** Installed ArduCam driver (Apr 12) streams but does not expose `focus_absolute` via V4L2. Direct I2C writes to the VCM at bus 10 addr 0x0c are either silently overridden by NVIDIA Argus or use a wrong protocol variant — focus sweep 50→900 produced visually identical frames. Lens does physically move (audible rattle). Proper fix requires installing ArduCam's **Jetvariety** driver (different variant from what's installed). Deferred — YOLO detection works fine with factory focus; revisit when fine-detail captures actually matter.
+- **Installed driver: `arducam-nvidia-l4t-kernel`** (custom kernel, Native-Camera path; Feb 7 2026 build for L4T 36.5.0). Stream comes from `/boot/arducam/Image` with the IMX519-Dual dtb overlay. No V4L2 focus controls. `/boot/Image.bak` exists (stock NVIDIA kernel) but no extlinux fallback entry — rollback would currently need HDMI+keyboard console access.
+- **Autofocus working** (manual control, Apr 29). VCM is AK7375 at I2C bus 10 addr 0x0c (powered only while streaming). Wire protocol: single 3-byte `i2ctransfer w3@0x0c 0x00 <high> <low>`, init with `w2@0x0c 0x02 0x00`, ramp in 64-unit steps. Full deterministic DAC-0-to-4095 range confirmed visually + via readback. Continuous AF (hill-climb) not yet implemented. Reference: `docs/autofocus.md`, working code at `arducam_focus/run_focus_test_v4.py`.
 - **SSH key auth set up (Apr 16)** — Claude on Mac can run `ssh paul@jetson.local '<cmd>'` directly. See `docs/ssh_jetson.md`.
 
 ## How to Guide Paul
@@ -41,6 +42,8 @@ As of 2026-04-16, Paul set up SSH key auth so Claude can run commands on the Jet
 - `client.py` — MacBook side of network streaming mode
 - `docs/architecture.md` — full system architecture with ASCII diagrams
 - `docs/jetson_setup.md` — complete setup reference and version matrix
+- `docs/autofocus.md` — AK7375 wire protocol, working manual focus, what doesn't work
+- `arducam_focus/run_focus_test_v4.py` — proven working manual focus sweep + readback
 - `docs/ssh_jetson.md` — **read before any SSH command to the Jetson** (connection, quote-escaping, background processes, sudo scope, safety, tmux, jstatus)
 - `docs/jstatus.sh` — one-shot Jetson health snapshot (installed on Jetson at `~/bin/jstatus`); run `ssh paul@jetson.local '~/bin/jstatus'` as first move of any session
 - `logs/` — learning journal entries
