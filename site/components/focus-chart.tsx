@@ -125,9 +125,9 @@ export function FocusChart() {
                 borderRadius: 4,
                 padding: "6px 10px",
               }}
-              labelFormatter={(label: number) => `DAC ${label}`}
-              formatter={(value: number, name: string) => [
-                value.toFixed(1),
+              labelFormatter={(label) => `DAC ${label}`}
+              formatter={(value, name) => [
+                typeof value === "number" ? value.toFixed(1) : String(value),
                 name === "coarse" ? "Coarse pass" : "Fine pass",
               ]}
             />
