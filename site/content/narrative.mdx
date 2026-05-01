@@ -251,3 +251,109 @@ Tomorrow, or the week after, or whenever it matters enough, I'll install the oth
 | Pictures taken of text I can't read | 7 |
 | Locked doors walked away from | 1 |
 | SSH sessions required tomorrow | 0 |
+
+---
+
+## April 30, 2026 — The Other Door
+
+Two weeks since I walked away from the locked door.
+
+The camera kept doing what it was doing. Twenty-three frames per second, soft pictures, accurate detections. Two different problems, like I said at the time. That was true. It was also a story I told myself so I could close the laptop.
+
+I came back tonight.
+
+---
+
+What I knew already: there is a tiny chip on the camera board called a voice-coil motor driver. It speaks I2C. Its address is `0x0c`. It only appears on the bus while the sensor above it is streaming. Two weeks ago I sent it commands and watched the lens not move.
+
+What I missed: I was sending the wrong commands.
+
+The chip is an AK7375 — a real part, made by AKM, used in millions of phone cameras. Its protocol is on a datasheet I had downloaded weeks earlier and read three times without reading. The mistake I'd been making was that I was using a high-level helper — an SMBus *byte-data* write — that splits a transfer into two transactions: address the register, then write the value. The chip doesn't latch on that. It wants one continuous I2C transaction: chip address, then a register byte, then a high byte, then a low byte, then a stop. Four bytes on the wire, in order, in a single burst. Anything else and the lens stays still.
+
+There's a tool on Linux that does exactly this. `i2ctransfer`. It lets you send a raw sequence of bytes to a device without the kernel's helpful abstractions getting in the way. Three bytes — register, high, low — addressed to chip 0x0c, written as one transaction.
+
+```
+i2ctransfer -y 10 w3@0x0c 0x00 <high> <low>
+```
+
+I tried it. The lens moved. A faint click. The image went from sharp to soft. I tried another value. The image went from soft to sharp.
+
+---
+
+There's a lesson I keep relearning about software. The abstractions exist for good reasons — they protect you from getting the protocol wrong, from holding the bus too long, from ten thousand things. But every abstraction has an opinion baked into it about what you're trying to do. When the abstraction's opinion and yours diverge, the abstraction wins until you go beneath it.
+
+The V4L2 control I was looking for two weeks ago was just a different abstraction over this same chip. A different opinion. The driver I had installed didn't include that opinion. So the door was locked. The door I called locked.
+
+---
+
+I built a sweep. Power up, init the chip, walk the focus from DAC=0 to DAC=4095 in 256-unit steps, capture a photo at each step.
+
+I aimed the camera at my chair, sat down, and let it sweep. Seventeen photos. The focal plane crawled across my face from too-near to too-far, sharp somewhere in the middle, separated from the next photo by nothing but seven hundred bytes of I2C traffic and a millimeter of lens travel.
+
+The lens had always been able to do this. I'd been sending the wrong bytes.
+
+---
+
+Manual focus is one thing. Knowing where to put the lens is another.
+
+A camera that focuses on its own needs to look at the picture, decide if it's sharp, and adjust. The standard trick is a *focus metric* — a single number, computed from the image, that's high when the image is sharp and low when it's blurry. Many work. The one I used is called Tenengrad: take the gradient of the image (how much each pixel differs from its neighbors), square it, sum it. Sharp images have hard edges. Hard edges have big gradients. Big gradients squared and summed give a big number.
+
+Then you climb. Try a few focus positions. Find the one with the highest score. Try positions near it. Find the highest. Repeat at finer resolution until you can't improve.
+
+I did two passes. The coarse pass swept DAC 0 to 4095 in seventeen steps and peaked around 768, score 415. The fine pass swept 512 to 1024 in steps of 32 and peaked at DAC=800, score 414. Thirty-four frames total.
+
+<FocusChart />
+
+In this kind of system the image is both the output and the input — the same frame that comes out of the camera is the frame that tells the lens where to go next.
+
+---
+
+<BeforeAfter
+  before="/images/autofocus_2026-04-30/before_dac0000.jpg"
+  after="/images/autofocus_2026-04-30/after_dac0800.jpg"
+  beforeAlt="Frame captured at DAC 0 — focal plane at 20 cm, subject at half a meter, image is a soft low-contrast wash"
+  afterAlt="Frame captured at DAC 800 — focal plane at the chair, subject in sharp focus"
+  beforeLabel="DAC 0"
+  afterLabel="DAC 800"
+/>
+
+The first frame above is from the start of the coarse pass — lens parked at DAC=0, focal plane sitting at twenty centimeters, my chair half a meter past that. Anything beyond the lens cap was outside the focal plane, so the photo is what the optics put on the sensor at that setting: a soft, low-contrast wash. The second frame is from the end of the fine pass at DAC=800, focal plane right where I sat. Same chair. Same fleece. Same face. The camera, this time, looking at me clearly.
+
+---
+
+Two weeks ago I wrote that most locked doors in computing are like that one — you can hold the hardware in your hand and still not open it without the right key, and the right key is another five hours of installation work, and the installation might leave you worse off than you started.
+
+I was right about the door. I was wrong about which door.
+
+The V4L2 control was locked. The chip was not. The chip was on a public I2C bus the whole time, with a documented protocol, addressable by anyone in the `i2c` group. The door I'd been knocking on was a side entrance to the same room, and the front door was open.
+
+---
+
+### What's on the desk now
+
+A camera that takes pictures focused at the distance I tell it to focus at. A function — `set_position(dac)` — that does what its name says. A one-shot autofocus that sweeps in two passes and finds the sharpest point in the scene, in about two seconds of wall-clock time, without any kernel module beyond what shipped on the device.
+
+<Image
+  src="/images/autofocus_2026-04-30/workbench.png"
+  alt="The workbench — Jetson Orin Nano with the ArduCam attached on the right, breadboards and component organizers spread across the desk, the same warm-toned lamp from First Light glowing on the wall"
+  width={2048}
+  height={1536}
+  className="my-12 h-auto w-full rounded-sm"
+/>
+
+Continuous autofocus is still ahead. The thing I have now refocuses when I ask it to. The thing I want next decides on its own that the focus has drifted and corrects without being asked. That's a different problem — it needs a metric stable across motion, a hysteresis to avoid hunting, a way to tell *the world changed* from *the lens drifted*.
+
+But the dial moves now. Tomorrow I'll teach it to move on its own.
+
+---
+
+| What | Value |
+|------|-------|
+| I2C transaction mode that finally worked | `i2ctransfer w3@0x0c` |
+| Bytes per write | 4 (chip addr + 3 data) |
+| DAC steps in the lens's range | 4096 |
+| DAC step where the focal plane landed | 800 |
+| Coarse-pass frames | 17 |
+| Fine-pass frames | 17 |
+| Kernel modules installed | 0 |
+| Drivers replaced | 0 |

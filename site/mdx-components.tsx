@@ -1,8 +1,12 @@
 import type { MDXComponents } from "mdx/types";
 import Image, { type ImageProps } from "next/image";
+import { BeforeAfter } from "./components/before-after";
+import { FocusChart } from "./components/focus-chart";
 
 export function useMDXComponents(components: MDXComponents): MDXComponents {
   return {
+    BeforeAfter,
+    FocusChart,
     h1: (props) => (
       <h1 className="mt-16 mb-8 font-serif text-4xl font-medium leading-[1.15] tracking-tight text-stone-900 sm:text-[2.75rem]" {...props} />
     ),
