@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Narrative from "@/content/narrative.mdx";
 
-const EVENINGS_COMPLETE = 1;
+const EVENINGS_COMPLETE = 3;
 const EVENINGS_TOTAL = 15;
 const REPO_URL = "https://github.com/psong11/jetson-yolo-stream";
 
