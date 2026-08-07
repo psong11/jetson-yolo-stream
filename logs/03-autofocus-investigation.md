@@ -2,6 +2,12 @@
 
 **Date:** 2026-04-16
 
+> **Resolved 2026-04-30.** This entry is preserved as written, including its wrong
+> conclusions. The chip is an **AK7375**, not a DW9714, and it needs one continuous
+> 3-byte I2C transaction — not the two-byte protocol assumed below. Argus was never
+> overwriting our values. Working protocol: `docs/autofocus.md`. The fix:
+> `logs/` has no entry for it; the story is in `narrative.md` under "The Other Door".
+
 ## What I Did
 
 Sat back down at the Jetson for the first time since first-light. Camera was still connected. Took a test photo. It was dark, washed-out, and blurry. Spent the rest of the session trying to understand why and whether I could fix it.

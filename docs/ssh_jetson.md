@@ -136,7 +136,7 @@ Facts that come up repeatedly. Confirm with `v4l2-ctl` / `i2cdetect` before trus
 | Sensor I2C | bus 10, addr `0x1a` (and mirrored on bus 2) |
 | VCM (autofocus) I2C | bus 10, addr `0x0c` — **only powered while sensor is streaming** |
 | Focus EEPROM | bus 10, addr `0x50` |
-| VCM protocol | DW9714: 2 bytes, `(f>>4)&0x3F` and `(f&0x0F)<<4`, range 0–1023 |
+| VCM protocol | **AK7375** (not DW9714): one 3-byte transaction `i2ctransfer -y 10 w3@0x0c 0x00 <high> <low>`, DAC range 0–4095. Init once per stream with `w2@0x0c 0x02 0x00`; ramp in 64-unit steps. Full protocol + dead ends: `docs/autofocus.md` |
 | GStreamer source | `nvarguscamerasrc` (never `cv2.VideoCapture(0)` — green frames) |
 | HW JPEG encoder | `nvjpegenc` |
 | Snapshot dir | `~/snapshots/` |
