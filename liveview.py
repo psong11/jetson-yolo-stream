@@ -1,9 +1,13 @@
 """Live MJPEG view of the CSI camera, with optional YOLO overlay.
 
 Open  http://jetson:8080  (tailnet) or  http://jetson.local:8080  (LAN).
-Endpoints:  /            viewer page
+Endpoints:  /            viewer page (with a snap button)
             /stream      multipart MJPEG (what the <img> tag consumes)
             /frame.jpg   single current frame (handy for scripts / control hub)
+            /snap        save the current CLEAN frame (no YOLO boxes) to
+                         ~/snapshots/live_<ts>.jpg — iPhone-style photo-while-
+                         recording; stream-resolution, the sensor mode can't
+                         switch to 16MP without restarting the pipeline
 
 No third-party web framework — stdlib http.server + system OpenCV (GStreamer
 build) + ultralytics, all already installed. Owns the camera while running:
@@ -30,14 +34,19 @@ GST = (
 
 PAGE = b"""<!doctype html><html><head><title>jetson liveview</title>
 <style>body{margin:0;background:#111;display:flex;flex-direction:column;
-align-items:center;font-family:monospace;color:#9a9}</style></head>
+align-items:center;font-family:monospace;color:#9a9}
+button{margin:8px;padding:10px 24px;font-family:monospace;font-size:16px}
+</style></head>
 <body><p id="s">jetson liveview</p><img src="/stream" style="max-width:100%">
+<button onclick="fetch('/snap').then(r=>r.text()).then(t=>s.textContent=t)">
+snap</button>
 </body></html>"""
 
 
 class Camera:
     def __init__(self, use_yolo):
         self.jpeg = None
+        self.raw = None  # latest clean frame (no overlay), for /snap
         self.lock = threading.Condition()
         self.fps = 0.0
         self.use_yolo = use_yolo
@@ -59,6 +68,7 @@ class Camera:
             if not ok:
                 time.sleep(0.05)
                 continue
+            raw = frame
             if self.model is not None:
                 frame = self.model.predict(frame, verbose=False)[0].plot()
             ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
@@ -69,12 +79,28 @@ class Camera:
             t_last = now
             with self.lock:
                 self.jpeg = buf.tobytes()
+                self.raw = raw
                 self.lock.notify_all()
 
     def next_jpeg(self):
         with self.lock:
             self.lock.wait(timeout=2.0)
             return self.jpeg
+
+    def snap(self):
+        """Save the current clean frame to ~/snapshots. Returns the path."""
+        import os
+
+        with self.lock:
+            frame = None if self.raw is None else self.raw.copy()
+        if frame is None:
+            return None
+        path = os.path.expanduser(
+            time.strftime("~/snapshots/live_%Y%m%d_%H%M%S.jpg")
+        )
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        cv2.imwrite(path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        return path
 
 
 CAM = None
@@ -99,6 +125,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "image/jpeg")
             self.end_headers()
             self.wfile.write(data)
+        elif self.path == "/snap":
+            path = CAM.snap()
+            self.send_response(200 if path else 503)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(
+                f"saved {path}".encode() if path else b"no frame yet"
+            )
         elif self.path == "/stream":
             self.send_response(200)
             self.send_header(
