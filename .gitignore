@@ -13,3 +13,6 @@ __pycache__/
 
 # Test images (but keep first_observations/)
 test.jpg
+
+# Claude Code — local machine state (permissions allowlist)
+.claude/settings.local.json
