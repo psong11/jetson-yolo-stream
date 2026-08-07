@@ -16,3 +16,6 @@ test.jpg
 
 # Claude Code — local machine state (permissions allowlist)
 .claude/settings.local.json
+
+# Vercel CLI link
+.vercel/
