@@ -88,6 +88,8 @@ function gallery(){fetch('/api/snaps').then(r=>r.json()).then(l=>{
  G.innerHTML='';l.forEach(n=>{const i=document.createElement('img');
  i.src='/snaps/'+n;i.onclick=()=>window.open('/snaps/'+n);G.appendChild(i);});});}
 function poll(){fetch('/api/status').then(r=>r.json()).then(s=>{
+ if(!s.camera){S.textContent='NO CAMERA: '+s.error;S.style.color='#e66';return;}
+ S.style.color='';
  S.textContent=`${s.fps.toFixed(1)} fps | yolo ${s.yolo?('every '+s.detect_every):'off'} | focus dac ${s.focus_dac??'?'}`;
  document.getElementById('rate').value=s.detect_every;}).catch(()=>{});}
 setInterval(poll,2000);poll();gallery();
@@ -106,6 +108,7 @@ class Camera:
         self.boxes = []           # [(x1,y1,x2,y2,label)] from last detection
         self.focuser = None
         self.focus_dac = None
+        self.cam_error = None     # set => degraded mode: gallery/status only
         self.af_lock = threading.Lock()
         self._af_started = False
         threading.Thread(target=self._run, daemon=True).start()
@@ -113,13 +116,38 @@ class Camera:
     # ---------- capture loop ----------
 
     def _run(self):
+        # Open the camera FIRST — fail fast and explicitly, before the slow
+        # model import. isOpened() is NOT the test: the GStreamer pipeline
+        # constructs fine even when Argus refuses the capture session (seen
+        # 2026-08-07: "Failed to create CaptureSession" with isOpened()==True).
+        # The only honest signal is a real frame arriving. CSI is not
+        # hot-pluggable, so a missing camera stays missing until a powered-off
+        # reconnect: degrade, don't retry.
+        cap = cv2.VideoCapture(GST, cv2.CAP_GSTREAMER)
+        got_frame = False
+        if cap.isOpened():
+            t0 = time.time()
+            while time.time() - t0 < 6:
+                ok, _ = cap.read()
+                if ok:
+                    got_frame = True
+                    break
+                time.sleep(0.2)
+        if not got_frame:
+            cap.release()
+            if os.path.exists("/dev/video0"):
+                self.cam_error = ("camera present but no frames — another "
+                                  "pipeline owns it (check tmux / gst-launch)")
+            else:
+                self.cam_error = ("no camera connected — /dev/video0 missing. "
+                                  "Power off to reconnect the CSI ribbon, "
+                                  "then reboot.")
+            print(f"[hub] DEGRADED: {self.cam_error}")
+            return  # server keeps serving gallery + status
         if self.use_yolo:
             from ultralytics import YOLO  # slow import — keep off main thread
             self.model = YOLO("/home/paul/yolo11n.pt")
             print("[hub] YOLO loaded")
-        cap = cv2.VideoCapture(GST, cv2.CAP_GSTREAMER)
-        if not cap.isOpened():
-            raise SystemExit("[hub] camera failed to open — already in use?")
         self.focuser = Focuser()
         self.focuser.init()
         print("[hub] camera open, serving")
@@ -193,6 +221,8 @@ class Camera:
 
     def autofocus(self):
         """Golden-section search on live frames. Returns best DAC, or None."""
+        if self.focuser is None:
+            return None  # degraded mode — no camera, no VCM rail
         if not self.af_lock.acquire(blocking=False):
             return None  # already running
         try:
@@ -232,6 +262,9 @@ class Camera:
             print(f"[hub] AF: dac={best} ({len(cache)} probes, "
                   f"{time.time() - t0:.1f}s)")
             return best
+        except RuntimeError as e:
+            print(f"[hub] AF failed: {e}")
+            return None
         finally:
             self.af_lock.release()
 
@@ -264,6 +297,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, "image/jpeg", data)
 
         elif path == "/snap":
+            if CAM.cam_error:
+                return self._send(503, "text/plain", CAM.cam_error.encode())
             p = CAM.snap()
             self._send(200 if p else 503, "text/plain",
                        f"saved {os.path.basename(p)}".encode() if p
@@ -275,6 +310,8 @@ class Handler(BaseHTTPRequestHandler):
                 "detect_every": CAM.detect_every,
                 "yolo": CAM.model is not None,
                 "focus_dac": CAM.focus_dac,
+                "camera": CAM.cam_error is None,
+                "error": CAM.cam_error,
             }).encode())
 
         elif path == "/api/set":
@@ -286,12 +323,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, "text/plain", b"?detect_every=1..60")
 
         elif path == "/api/af":
+            if CAM.cam_error:
+                return self._send(503, "text/plain", CAM.cam_error.encode())
             best = CAM.autofocus()
             self._send(200, "text/plain",
                        f"focused: dac {best}".encode() if best is not None
                        else b"autofocus already running")
 
         elif path == "/api/focus":
+            if CAM.cam_error:
+                return self._send(503, "text/plain", CAM.cam_error.encode())
             try:
                 dac = max(0, min(4095, int(q["dac"][0])))
                 self._send(200, "text/plain",
