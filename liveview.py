@@ -13,6 +13,7 @@ Endpoints
   /frame.jpg       single current annotated frame
   /snap            save current CLEAN frame -> ~/snapshots/live_<ts>.jpg
   /snaps/<name>    serve a saved snapshot (gallery images)
+  /api/delete?name=<name>    delete a snapshot from ~/snapshots
   /api/status      JSON: fps, detect_every, focus dac, yolo state
   /api/set?detect_every=N    run YOLO every Nth frame (1..60), live
   /api/af          run golden-section autofocus (~6 s), returns best dac
@@ -86,7 +87,13 @@ label{font-size:13px;color:#686;min-width:48px}
 #status{font-size:13px;color:#686;margin:0 0 14px;min-height:1.2em}
 input[type=range]{flex:1;min-width:80px;accent-color:#9a9}
 #thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px}
-#thumbs img{width:100%;aspect-ratio:16/9;object-fit:cover;border:1px solid #333;cursor:pointer}
+#thumbs .th{position:relative}
+#thumbs img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;
+border:1px solid #333;cursor:pointer}
+#thumbs .x{position:absolute;top:3px;right:3px;display:none;padding:0 6px;
+font-size:13px;line-height:18px;background:rgba(0,0,0,.75);color:#e66;
+border:1px solid #444;cursor:pointer}
+#thumbs .th:hover .x{display:block}
 @media(max-width:800px){
 body{height:auto;display:flex;flex-direction:column}
 #stream .pad{min-height:220px}#tbd{order:9}}
@@ -117,8 +124,13 @@ const S=document.getElementById('status'),G=document.getElementById('thumbs'),
 D=document.getElementById('dac'),DV=document.getElementById('dacv');
 function hit(u){S.textContent='...';fetch(u).then(r=>r.text()).then(t=>{S.textContent=t;gallery();});}
 function gallery(){fetch('/api/snaps').then(r=>r.json()).then(l=>{
- G.innerHTML='';l.forEach(n=>{const i=document.createElement('img');
- i.src='/snaps/'+n;i.onclick=()=>window.open('/snaps/'+n);G.appendChild(i);});});}
+ G.innerHTML='';l.forEach(n=>{const d=document.createElement('div');d.className='th';
+ const i=document.createElement('img');
+ i.src='/snaps/'+n;i.onclick=()=>window.open('/snaps/'+n);
+ const x=document.createElement('button');x.className='x';x.textContent='\\u00d7';
+ x.title='delete';x.onclick=e=>{e.stopPropagation();
+ if(confirm('delete '+n+'?'))hit('/api/delete?name='+encodeURIComponent(n));};
+ d.append(i,x);G.appendChild(d);});});}
 function poll(){fetch('/api/status').then(r=>r.json()).then(s=>{
  if(!s.camera){S.textContent='NO CAMERA: '+s.error;S.style.color='#e66';return;}
  S.style.color='';
@@ -380,6 +392,14 @@ class Handler(BaseHTTPRequestHandler):
                            key=os.path.getmtime, reverse=True)[:24]
             self._send(200, "application/json",
                        json.dumps([os.path.basename(f) for f in files]).encode())
+
+        elif path == "/api/delete":
+            name = os.path.basename(q.get("name", [""])[0])
+            full = os.path.join(SNAPDIR, name)
+            if not (name.endswith(".jpg") and os.path.isfile(full)):
+                return self._send(404, "text/plain", b"not found")
+            os.remove(full)
+            self._send(200, "text/plain", f"deleted {name}".encode())
 
         elif path.startswith("/snaps/"):
             name = os.path.basename(path)  # basename() defeats ../ traversal
