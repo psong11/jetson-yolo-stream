@@ -59,30 +59,62 @@ GST = (
 PAGE = """<!doctype html><html><head><title>jetson cam hub</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-body{margin:0;background:#111;color:#9a9;font-family:monospace;
-display:flex;flex-direction:column;align-items:center;gap:8px;padding:8px}
-img.live{max-width:100%;border:1px solid #333}
-#bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-button,select{font-family:monospace;font-size:15px;padding:8px 18px;
-background:#222;color:#9a9;border:1px solid #444}
-#gal{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;max-width:960px}
-#gal img{height:84px;border:1px solid #333;cursor:pointer}
-#status{font-size:13px;color:#686}
+*{box-sizing:border-box}
+body{margin:0;background:#111;color:#9a9;font-family:monospace;height:100vh;
+display:grid;gap:10px;padding:10px;
+grid-template-columns:minmax(0,3fr) minmax(0,2fr);
+grid-template-rows:minmax(0,3fr) minmax(0,2fr);
+grid-template-areas:"stream ctrl" "tbd gal"}
+.panel{border:1px solid #333;display:flex;flex-direction:column;min-width:0;min-height:0}
+.panel>h2{margin:0;padding:6px 10px;font-size:11px;font-weight:normal;
+letter-spacing:2px;text-transform:uppercase;color:#686;border-bottom:1px solid #333}
+.panel>.pad{flex:1;min-height:0;overflow:auto;padding:12px}
+#stream{grid-area:stream}
+#stream .pad{display:flex;align-items:center;justify-content:center;
+padding:0;overflow:hidden;background:#000}
+#stream img{max-width:100%;max-height:100%}
+#ctrl{grid-area:ctrl}
+#gal{grid-area:gal}
+#tbd{grid-area:tbd;border-style:dashed}
+#tbd .pad{display:flex;align-items:center;justify-content:center;
+color:#454;letter-spacing:4px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+button,select{font-family:monospace;font-size:14px;padding:8px 16px;
+background:#222;color:#9a9;border:1px solid #444;cursor:pointer}
+button:hover{background:#2c2c2c}
+label{font-size:13px;color:#686;min-width:48px}
+#status{font-size:13px;color:#686;margin:0 0 14px;min-height:1.2em}
+input[type=range]{flex:1;min-width:80px;accent-color:#9a9}
+#thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px}
+#thumbs img{width:100%;aspect-ratio:16/9;object-fit:cover;border:1px solid #333;cursor:pointer}
+@media(max-width:800px){
+body{height:auto;display:flex;flex-direction:column}
+#stream .pad{min-height:220px}#tbd{order:9}}
 </style></head><body>
+<div class="panel" id="stream"><h2>live</h2>
+<div class="pad"><img src="/stream"></div></div>
+<div class="panel" id="ctrl"><h2>control</h2><div class="pad">
 <p id="status">connecting...</p>
-<img class="live" src="/stream">
-<div id="bar">
+<div class="row">
 <button onclick="hit('/snap')">snap</button>
 <button onclick="hit('/api/af')">autofocus</button>
-<label>detect:
+</div>
+<div class="row"><label>detect</label>
 <select id="rate" onchange="hit('/api/set?detect_every='+this.value)">
 <option value="1">every frame</option><option value="2">every 2nd</option>
 <option value="5">every 5th</option><option value="10">every 10th</option>
-<option value="30">~1 per second</option></select></label>
-</div>
-<div id="gal"></div>
+<option value="30">~1 per second</option></select></div>
+<div class="row"><label>focus</label>
+<input type="range" id="dac" min="0" max="4095" step="16"
+ onchange="hit('/api/focus?dac='+this.value)">
+<span id="dacv">?</span></div>
+</div></div>
+<div class="panel" id="tbd"><h2>tbd</h2><div class="pad">&mdash;</div></div>
+<div class="panel" id="gal"><h2>gallery</h2>
+<div class="pad"><div id="thumbs"></div></div></div>
 <script>
-const S=document.getElementById('status'),G=document.getElementById('gal');
+const S=document.getElementById('status'),G=document.getElementById('thumbs'),
+D=document.getElementById('dac'),DV=document.getElementById('dacv');
 function hit(u){S.textContent='...';fetch(u).then(r=>r.text()).then(t=>{S.textContent=t;gallery();});}
 function gallery(){fetch('/api/snaps').then(r=>r.json()).then(l=>{
  G.innerHTML='';l.forEach(n=>{const i=document.createElement('img');
@@ -91,7 +123,10 @@ function poll(){fetch('/api/status').then(r=>r.json()).then(s=>{
  if(!s.camera){S.textContent='NO CAMERA: '+s.error;S.style.color='#e66';return;}
  S.style.color='';
  S.textContent=`${s.fps.toFixed(1)} fps | yolo ${s.yolo?('every '+s.detect_every):'off'} | focus dac ${s.focus_dac??'?'}`;
- document.getElementById('rate').value=s.detect_every;}).catch(()=>{});}
+ document.getElementById('rate').value=s.detect_every;
+ if(s.focus_dac!=null&&document.activeElement!==D){D.value=s.focus_dac;DV.textContent=s.focus_dac;}
+}).catch(()=>{});}
+D.addEventListener('input',()=>DV.textContent=D.value);
 setInterval(poll,2000);poll();gallery();
 </script></body></html>"""
 
