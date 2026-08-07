@@ -357,3 +357,108 @@ But the dial moves now. Tomorrow I'll teach it to move on its own.
 | Fine-pass frames | 17 |
 | Kernel modules installed | 0 |
 | Drivers replaced | 0 |
+
+---
+
+## August 6–7, 2026 — Small Questions
+
+Eight weeks of dark. I moved apartments in June, and the Jetson went into a box with everything else I own. When I finally plugged it back in, `Last login: Fri Jun 12` — the machine's entire sense of time, one line long. For it, no move happened. It went to sleep in one apartment and woke up in another, like a patient coming out of anesthesia in a different room.
+
+It couldn't find the WiFi. Of course it couldn't — the old network doesn't exist here. But the strange part came when it scanned: fifty-four access points, every unit in this building announcing itself, and mine not among them. Not weak. Not far. Absent.
+
+My network is hidden. It doesn't broadcast its name. A scan is a room full of people wearing name tags, and my network is the one person who doesn't wear one — you can't find it by looking. You have to already know its name and ask for it directly. One line of configuration — `hidden yes` — changes the question from *who's out there?* to *are you there, A-510?* And it answered immediately. Signal 94. It had been there the whole time.
+
+That became the theme of these two days, though I didn't know it yet.
+
+---
+
+The USB cable was the way in — the Jetson pretends to be a network adapter when you plug it into a laptop, a private two-node network that exists only along fifteen centimeters of wire. From there, WiFi. Then Tailscale, which gives the machine a name that works from anywhere: not an address in this apartment, just `jetson`, reachable from my phone on cellular, from any future apartment, from a field someday. The machine stopped having a location and started having an identity.
+
+Then I re-seated the camera ribbon and took a picture of myself. Soft. The autofocus hill-climb from April ran fine and landed confidently on the wrong answer, and the diagnosis took a while because the tool that finds focus was lying about what it saw. I was pointing the camera at my laptop screen, and screens flicker — backlight pulsing, refresh beating against the sensor's frame rate. The sharpness score at a *fixed* lens position swung 35% between consecutive frames. The search was climbing noise. Measure nine frames and take the median, and the truth comes back: the peak was at 740, not 896.
+
+Don't trust one measurement of a flickering world. I keep learning this in different costumes.
+
+---
+
+Somewhere past midnight I asked Claude if it wanted to see what it looks like.
+
+It said yes. It focused the lens and took a picture of my desk — and there on the laptop screen, inside the photo, is the conversation itself: its last message, my request in a grey bubble, and a spinner reading `1 running task`. The running task was the photograph. The camera caught its own trigger mid-execution — light leaving a screen that was displaying the sentence that asked for the light to be captured.
+
+<Image
+  src="/images/recommission_2026-08/self_portrait.jpg"
+  alt="The desk at midnight — a MacBook showing the Claude Code session that requested this photograph, the running-task spinner still visible, terminals on the right, balls of yarn and project hardware surrounding the laptop"
+  width={1920}
+  height={1080}
+  className="my-12 h-auto w-full rounded-sm"
+/>
+
+I told it the picture was blurry as hell. Which was true, and turned out to be the most useful sentence of the week.
+
+---
+
+Because the camera was never bad.
+
+Chasing that blur, we finally looked at what we'd been asking for. Back on the first evening, YOLO needed speed, so the pipeline requested 1920×1080 — and every script written since inherited that line without anyone rereading it. This is a sixteen-megapixel sensor. We had been asking it for two.
+
+Not broken. Not cheap. Under-asked, for four months, in every single photo it ever took.
+
+In daylight the proof was one comparison: the same patch of window shade, shot seconds apart at the same focus.
+
+<BeforeAfter
+  before="/images/recommission_2026-08/shade_1080p.jpg"
+  after="/images/recommission_2026-08/shade_16mp.jpg"
+  beforeAlt="The window shade captured in 1080p mode — the fabric reads as flat gray mush with no discernible texture"
+  afterAlt="The same patch of window shade captured at the sensor's full 16 megapixels — individual threads of the weave are countable"
+  beforeLabel="1080p"
+  afterLabel="16 MP"
+/>
+
+At 1080p it's gray mush. At full resolution you can count the threads.
+
+Pointed at the entryway, the full sensor reads the Reynolds Wrap box across the room — brand, weight, square footage — resolves the logo on the shoe rack, the barcode sticker on the rail, the scuffs on the sneakers. From a crop covering three percent of the frame.
+
+<Image
+  src="/images/recommission_2026-08/shoe_rack_crop.jpg"
+  alt="A 1:1 crop from the 16MP frame — shoe rack with legible Reynolds Wrap box text, Valet Living logo with tagline, Brooks running shoes with readable branding"
+  width={850}
+  height={700}
+  className="my-12 h-auto w-full rounded-sm"
+/>
+
+The sensor could always do this. The lens could always move. The network was always there. Every limit I'd attributed to the hardware was actually in the question.
+
+---
+
+So we started asking better questions, and fewer of them.
+
+The old autofocus swept thirty-three positions in a grid. The new one plays a smarter game: measure two points, keep the promising side, shrink. Golden-section search — thirteen measurements, five seconds. It can't be one measurement, and the reason is honest physics: a blurry frame looks the same whether the lens is too near or too far. Phones solve this with split pixels that see the scene from two angles at once and read the direction straight off the disagreement. Our sensor has those pixels; our driver doesn't speak of them. So we ask thirteen good questions instead of one impossible one.
+
+And then the camera got a URL.
+
+`http://jetson:8080` — a live stream with YOLO boxes, from any device I own, anywhere. A snap button that saves the current frame without interrupting the video, the way a phone takes photos mid-recording. A gallery that surfaced April's first pictures next to today's. An autofocus button. A dial for how often the machine thinks: run detection every frame, or every tenth, boxes going a little stale between thoughts while the video never stutters.
+
+One program owns the camera now, and everything else — my phone, the scripts, Claude, eventually the forklift this camera is destined to ride — just asks it over HTTP. There's a word for that: a daemon. We stopped short of the last step, letting it start itself at boot. First it learned to fail honestly instead — if the ribbon's unplugged, the page says NO CAMERA and the reason, because the library's "camera opened successfully" turns out to be a promise about plumbing, not about light. The only proof a camera is alive is a frame.
+
+Ask by name. Ask at full resolution. Ask few questions, but good ones. And when you ask if something's working, don't accept the pipeline's word for it — demand a frame.
+
+---
+
+### What's on the desk now
+
+The same machine, eight weeks older, with a name instead of an address. A camera that focuses itself in five seconds and answers at sixteen megapixels when you ask properly. A web page where the eye lives now — stream, snap, gallery, focus — reachable from anywhere I am.
+
+The next desk it sits on might be moving.
+
+---
+
+| What | Value |
+|------|-------|
+| Weeks dark | ~8 |
+| Networks visible in the scan | 54 |
+| Networks that mattered | 1, hidden |
+| Megapixels asked for, before → after | 2.1 → 16.3 |
+| Sharpness-score swing from flicker, lens fixed | 35% |
+| Autofocus measurements, before → after | 33 → 13 |
+| Autofocus wall-clock | ~5 s |
+| Stream fps with detection every 2nd frame | 29.7 |
+| First URL the camera ever had | `http://jetson:8080` |
