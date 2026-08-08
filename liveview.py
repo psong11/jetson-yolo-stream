@@ -463,7 +463,7 @@ def analyze_scene():
         raise RuntimeError("jpeg encode failed")
     body = json.dumps({
         "model": ANALYZE_MODEL,
-        "max_tokens": 400,
+        "max_tokens": 1000,
         "messages": [{"role": "user", "content": [
             {"type": "image", "source": {
                 "type": "base64", "media_type": "image/jpeg",
@@ -476,7 +476,13 @@ def analyze_scene():
         headers={"x-api-key": key, "anthropic-version": "2023-06-01",
                  "content-type": "application/json"})
     with urllib.request.urlopen(req, timeout=90) as r:
-        text = json.loads(r.read())["content"][0]["text"]
+        out = json.loads(r.read())
+    # content may lead with a thinking block — take every text block, not [0]
+    text = "\n".join(b.get("text", "") for b in out.get("content", [])
+                     if b.get("type") == "text").strip()
+    if not text:
+        raise RuntimeError(
+            f"API returned no text (stop_reason: {out.get('stop_reason')})")
     return text, os.path.basename(path)
 
 
