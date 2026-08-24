@@ -23,6 +23,10 @@ journalctl -u liveview -n 50       # last 50 lines
 Startup takes ~15 s: device wait + Argus settle, then YOLO loads and autofocus
 runs once. `/api/status` returning a `focus_dac` means it's fully up.
 
+Verified on a cold power-cycle (2026-08-23): service started 40 s after kernel
+boot, camera opened on the first try, YOLO up at +9 s, autofocus done at +16 s —
+no human involved, no degraded mode.
+
 ---
 
 ## "The site is down"
@@ -35,6 +39,13 @@ Work down this list; each step tells you which layer failed.
 | 2. Is the service up? | `sudo systemctl status liveview` | `failed` → read the journal; `inactive` → someone stopped it |
 | 3. Why did it die? | `journalctl -u liveview -n 50` | Python traceback, or Argus errors |
 | 4. Is the camera alive? | `curl -s jetson.local:8080/api/status` | `"camera": false` → degraded, see below |
+
+**Boot logs are stamped 1969.** The Jetson has no battery-backed clock: it boots
+at the epoch and jumps to real time when NTP syncs, ~40 s in. So the service's
+own boot lines land in *December 1969* and sort to the bottom of the journal.
+Use `journalctl -u liveview -b` (boot-relative) rather than hunting by date, and
+expect any snapshot taken in the first minute after a cold boot to be named
+`live_19691231_*.jpg`.
 
 **Historical note:** before this was a service, the hub ran in a tmux session —
 and tmux dies with a reboot. The site went silently down twice that way (Aug 8
