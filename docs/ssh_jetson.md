@@ -141,7 +141,8 @@ Facts that come up repeatedly. Confirm with `v4l2-ctl` / `i2cdetect` before trus
 | HW JPEG encoder | `nvjpegenc` |
 | Snapshot dir | `~/snapshots/` |
 | Project repo on Mac | `/Users/paulsong/Documents/learn/jetson-yolo-stream` |
-| Docs | `docs/architecture.md`, `docs/jetson_setup.md`, `docs/ssh_jetson.md` (this) |
+| Camera hub | `liveview.py`, running as **`liveview.service`** at http://jetson:8080. Owns the camera whenever it runs — `sudo systemctl stop liveview` before any manual capture. Ops: `docs/camera_hub.md` |
+| Docs | `docs/architecture.md`, `docs/jetson_setup.md`, `docs/camera_hub.md`, `docs/ssh_jetson.md` (this) |
 
 ---
 
@@ -188,6 +189,8 @@ To update the script: edit `docs/jstatus.sh` locally, then `scp docs/jstatus.sh 
 ## 12. tmux — long-running work on the Jetson
 
 For anything that takes more than a few seconds (captures, TensorRT exports, YOLO runs, debugging) use a tmux session on the Jetson so the process survives SSH disconnects and you can reattach to see live output.
+
+**Not for the camera hub.** `liveview.py` used to be started here as a tmux session named `live`. It is a systemd service now — `sudo systemctl restart liveview`, logs via `journalctl -u liveview`. Starting a second copy in tmux will fight the service for the camera and get no frames. See `docs/camera_hub.md`.
 
 ```bash
 # Start (or reuse) a named session and run something inside it

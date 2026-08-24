@@ -13,7 +13,8 @@ STREAM=/tmp/stream
 
 if pgrep -f "liveview\.py" >/dev/null 2>&1; then
   echo "*** liveview is running and owns the camera."
-  echo "*** stop it first:  tmux kill-session -t live"
+  echo "*** stop it first:  sudo systemctl stop liveview"
+  echo "*** and start it again when you are done."
   exit 1
 fi
 

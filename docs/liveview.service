@@ -1,0 +1,46 @@
+# Camera hub as a service — starts the hub at boot so a reboot can't
+# silently take the site down. Full docs: docs/camera_hub.md
+#
+# Install (needs Paul's password):
+#   scp docs/liveview.service paul@jetson.local:/tmp/
+#   ssh -t paul@jetson.local 'sudo install -m 644 /tmp/liveview.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now liveview'
+
+[Unit]
+Description=Jetson camera hub (MJPEG stream, YOLO, snapshots, focus)
+Documentation=https://github.com/psong11/jetson-yolo-stream/blob/main/docs/camera_hub.md
+# The camera is useless until Argus is up. Without this ordering the hub can
+# win the race at boot, find no frames, and sit in degraded mode ("NO CAMERA")
+# until a human restarts it — the hub degrades rather than retries by design.
+After=nvargus-daemon.service network.target
+Wants=nvargus-daemon.service
+
+# A real crash loop should end as "failed" and be visible, not restart forever
+# in silence. Five tries in five minutes, then it stops and stays stopped.
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+User=paul
+Group=paul
+WorkingDirectory=/home/paul
+Environment=HOME=/home/paul
+# Unbuffered, or python holds stdout back and the journal lags behind reality.
+Environment=PYTHONUNBUFFERED=1
+
+# nvargus-daemon reports "active" slightly before it will actually hand out a
+# capture session. Wait for the device node (10s cap), then let Argus settle.
+ExecStartPre=/bin/bash -c 'for i in 1 2 3 4 5 6 7 8 9 10; do [ -e /dev/video0 ] && break; sleep 1; done; sleep 5'
+ExecStart=/usr/bin/python3 /home/paul/liveview.py --yolo
+
+Restart=on-failure
+RestartSec=10
+
+# Log to the journal, not /tmp: systemd-tmpfiles sweeps /tmp and ate the old
+# /tmp/liveview.log, leaving no evidence the night the hub went down.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=liveview
+
+[Install]
+WantedBy=multi-user.target

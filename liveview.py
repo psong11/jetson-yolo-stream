@@ -2,8 +2,8 @@
 
 This is the single owner of the camera while it runs. Everything else (the
 browser page, snap.sh's refusal check, curl, future forklift code) talks to it
-over HTTP instead of touching the sensor. Make it start at boot via systemd
-and it is, in the proper sense, a daemon.
+over HTTP instead of touching the sensor. It starts at boot via systemd
+(docs/liveview.service), which makes it, in the proper sense, a daemon.
 
 Open  http://jetson:8080  (tailnet, via MagicDNS) or  http://jetson.local:8080.
 
@@ -31,8 +31,9 @@ Design notes
   - Stdlib http.server + system OpenCV + ultralytics only. No pip installs.
 
 Usage:  python3 liveview.py [--yolo] [--port 8080]
-tmux:   tmux new -d -s live "python3 ~/liveview.py --yolo 2>&1 | tee /tmp/liveview.log"
-Stop:   tmux kill-session -t live
+Service (normal):  sudo systemctl {start,stop,restart,status} liveview
+Logs:              journalctl -u liveview -f
+Ops guide:         docs/camera_hub.md
 """
 import argparse
 import base64
@@ -259,7 +260,8 @@ class Camera:
             cap.release()
             if os.path.exists("/dev/video0"):
                 self.cam_error = ("camera present but no frames — another "
-                                  "pipeline owns it (check tmux / gst-launch)")
+                                  "pipeline owns it (systemctl status liveview, "
+                                  "or a stray gst-launch)")
             else:
                 self.cam_error = ("no camera connected — /dev/video0 missing. "
                                   "Power off to reconnect the CSI ribbon, "

@@ -48,6 +48,9 @@ As of 2026-04-16, Paul set up SSH key auth so Claude can run commands on the Jet
 - `arducam_focus/focuser.py` — reusable Focuser class (init / set_position / autofocus / park)
 - `arducam_focus/run_focus_test_v4.py` — proven working manual focus sweep + readback
 - `arducam_focus/test_autofocus.py` — end-to-end one-shot AF driver
+- `liveview.py` — the camera hub (stream, YOLO, snap, gallery, focus, vitals, FORK-1 analyze); runs as `liveview.service`
+- `docs/camera_hub.md` — **hub operations**: service commands, "site is down" triage, camera-ownership rule, endpoints
+- `docs/liveview.service` — the systemd unit (source of truth; install instructions in its header)
 - `docs/ssh_jetson.md` — **read before any SSH command to the Jetson** (connection, quote-escaping, background processes, sudo scope, safety, tmux, jstatus)
 - `docs/jstatus.sh` — one-shot Jetson health snapshot (installed on Jetson at `~/bin/jstatus`); run `ssh paul@jetson.local '~/bin/jstatus'` as first move of any session
 - `narrative.md` — the build journal in long-form prose; **the spine of the portfolio site**, preserve voice
