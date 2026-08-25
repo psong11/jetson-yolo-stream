@@ -24,6 +24,15 @@ As of 2026-04-16, Paul set up SSH key auth so Claude can run commands on the Jet
 
 **Before running any SSH command to the Jetson, read `docs/ssh_jetson.md`.** It covers the one-shot pattern, quote-escaping, background-process traps, the narrow `sudo` allowlist (i2c tools only), file transfer, and the list of actions that require Paul's explicit confirmation. Failing to read it has caused hangs, stale gst pipelines, and sudo deadlocks in the past.
 
+## Past Mistakes (MANDATORY)
+
+**Read `docs/failure_log.md` before working on this project.** It lists every
+mistake Claude has made here — killed SSH sessions, focus measurements that
+chased noise, a 23-hour outage that went unnoticed because "it started
+successfully" was mistaken for "it works" — each one reduced to a rule. One
+entry is already marked [REPEAT] because it was made twice. Do not add a
+second.
+
 ## Key Architecture Decisions
 - CSI camera requires GStreamer pipeline (nvarguscamerasrc) — cv2.VideoCapture(0) gives green images
 - Must use system OpenCV (python3-opencv apt package) not pip opencv-python — only system build has GStreamer
@@ -51,6 +60,7 @@ As of 2026-04-16, Paul set up SSH key auth so Claude can run commands on the Jet
 - `liveview.py` — the camera hub (stream, YOLO, snap, gallery, focus, vitals, FORK-1 analyze); runs as `liveview.service`
 - `docs/camera_hub.md` — **hub operations**: service commands, "site is down" triage, camera-ownership rule, endpoints
 - `docs/liveview.service` — the systemd unit (source of truth; install instructions in its header)
+- `docs/failure_log.md` — **read first**: every mistake made on this project, as rules (remote execution, measurement, premature victory, encoding, explaining)
 - `docs/ssh_jetson.md` — **read before any SSH command to the Jetson** (connection, quote-escaping, background processes, sudo scope, safety, tmux, jstatus)
 - `docs/jstatus.sh` — one-shot Jetson health snapshot (installed on Jetson at `~/bin/jstatus`); run `ssh paul@jetson.local '~/bin/jstatus'` as first move of any session
 - `narrative.md` — the build journal in long-form prose; **the spine of the portfolio site**, preserve voice

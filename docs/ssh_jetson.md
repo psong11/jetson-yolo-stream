@@ -1,6 +1,6 @@
 # SSH Playbook — Running Commands on the Jetson from Claude
 
-**IMPORTANT for Claude:** Read this file *before* running any `ssh paul@jetson.local` commands. It documents how to drive the Jetson remotely without causing hangs, hidden state, or destructive surprises.
+**IMPORTANT for Claude:** Read this file *before* running any `ssh paul@jetson.local` commands, and read `docs/failure_log.md` too — several entries there are SSH mistakes this file's rules were meant to prevent and didn't. It documents how to drive the Jetson remotely without causing hangs, hidden state, or destructive surprises.
 
 ---
 
@@ -82,8 +82,14 @@ The critical pieces:
 To stop a backgrounded process later, track it by name:
 
 ```bash
-ssh paul@jetson.local 'pkill -f nvarguscamerasrc'
+ssh paul@jetson.local 'pkill -f nvargusc[a]merasrc'
 ```
+
+**The bracket is not enough on its own.** `pkill -f` matches the SSH command's
+own command line, so the pattern must not appear in plain form *anywhere else
+in that command* — including in a `nohup ... &` earlier in the same line. That
+exact mistake killed a session on 2026-08-24. Prefer capturing the PID at
+launch and killing that. See `docs/failure_log.md` §1.
 
 **Never leave a background gst pipeline running across commands without an explicit kill.** The camera has one ISP channel — a stale pipeline blocks the next one.
 
