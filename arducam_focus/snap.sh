@@ -11,12 +11,23 @@ set -uo pipefail
 OUT="${1:-$HOME/snapshots/snap_$(date +%Y%m%d_%H%M%S).jpg}"
 STREAM=/tmp/stream
 
-if pgrep -f "liveview\.py" >/dev/null 2>&1; then
-  echo "*** liveview is running and owns the camera."
-  echo "*** stop it first:  sudo systemctl stop liveview"
-  echo "*** and start it again when you are done."
-  exit 1
-fi
+# The hub only owns the camera while its stream is running — if it is up but
+# idle, the sensor is released and we can just take the shot.
+HUB=$(curl -s --max-time 3 "http://localhost:8080/api/status" 2>/dev/null)
+case "$HUB" in
+  *'"state": "running"'*|*'"state": "starting"'*)
+    echo "*** the hub is streaming and owns the camera."
+    echo "*** free it without stopping the service:"
+    echo "***   curl -s 'http://localhost:8080/api/camera?on=0'"
+    echo "*** then turn it back on with on=1 when you are done."
+    exit 1 ;;
+  "")
+    if pgrep -f "livevie[w]\.py" >/dev/null 2>&1; then
+      echo "*** liveview is running but not answering on :8080."
+      echo "*** stop it first:  sudo systemctl stop liveview"
+      exit 1
+    fi ;;
+esac
 
 cleanup() { pkill -f "gst-launc[h]-1.0 nvarguscamerasrc" 2>/dev/null; sleep 1; rm -rf "$STREAM"; }
 trap cleanup EXIT

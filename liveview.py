@@ -17,7 +17,9 @@ Endpoints
   /api/vitals      JSON telemetry from tegrastats (gpu, cpu, ram, temp, watts)
   /api/analyze     snap a frame, send it to the Claude API in forklift
                    character (FORK-1); needs an API key in ~/.anthropic_key
-  /api/status      JSON: fps, detect_every, focus dac, yolo state
+  /api/camera?on=0|1   stop/start the stream. Off releases the pipeline
+                   entirely (sensor unpowered, camera free for snap.sh)
+  /api/status      JSON: state, fps, detect_every, focus dac, yolo
   /api/set?detect_every=N    run YOLO every Nth frame (1..60), live
   /api/af          run golden-section autofocus (~6 s), returns best dac
   /api/focus?dac=N move the lens directly
@@ -83,6 +85,11 @@ letter-spacing:2px;text-transform:uppercase;color:#686;border-bottom:1px solid #
 #stream .pad{display:flex;align-items:center;justify-content:center;
 padding:0;overflow:hidden;background:#000}
 #stream img{max-width:100%;max-height:100%}
+#camoff{display:none;align-items:center;justify-content:center;
+width:100%;height:100%;color:#565;letter-spacing:4px;font-size:13px}
+#camoff.bad{color:#e66}
+#pwr{border-color:#575}
+#pwr.off{border-color:#753;color:#ca5}
 #ctrl{grid-area:ctrl}
 #gal{grid-area:gal}
 #vitals{grid-area:vitals}
@@ -130,10 +137,13 @@ body{height:auto;display:flex;flex-direction:column}
 #stream .pad{min-height:220px}#vitals{order:9}}
 </style></head><body>
 <div class="panel" id="stream"><h2>live</h2>
-<div class="pad"><img src="/stream"></div></div>
+<div class="pad"><img id="live" src="/stream"><div id="camoff">CAMERA OFF</div></div></div>
 <div class="panel" id="ctrl"><h2>control</h2><div class="pad">
 <p id="status">connecting...</p>
 <h3>camera</h3>
+<div class="row">
+<button id="pwr" onclick="power()">stop stream</button>
+</div>
 <div class="row">
 <button onclick="hit('/snap')">snap</button>
 <button onclick="hit('/api/af')">autofocus</button>
@@ -172,7 +182,13 @@ body{height:auto;display:flex;flex-direction:column}
 const S=document.getElementById('status'),G=document.getElementById('thumbs'),
 D=document.getElementById('dac'),DV=document.getElementById('dacv'),
 LB=document.getElementById('lb'),LBI=document.getElementById('lbi'),
-LBT=document.getElementById('lbt');
+LBT=document.getElementById('lbt'),LIVE=document.getElementById('live'),
+OFF=document.getElementById('camoff'),PWR=document.getElementById('pwr');
+let wasLive=true;
+function power(){const on=PWR.classList.contains('off');
+ S.textContent='...';
+ fetch('/api/camera?on='+(on?1:0)).then(r=>r.text()).then(t=>{
+  S.textContent=t;setTimeout(poll,500);setTimeout(poll,2000);});}
 function lbShow(src,txt){LBI.style.display=src?'':'none';if(src)LBI.src=src;
 LBT.textContent=txt||'';LB.classList.add('on');}
 function lbClose(){LB.classList.remove('on');}
@@ -191,7 +207,23 @@ function gallery(){fetch('/api/snaps').then(r=>r.json()).then(l=>{
  if(confirm('delete '+n+'?'))hit('/api/delete?name='+encodeURIComponent(n));};
  d.append(i,x);G.appendChild(d);});});}
 function poll(){fetch('/api/status').then(r=>r.json()).then(s=>{
- if(!s.camera){S.textContent='NO CAMERA: '+s.error;S.style.color='#e66';return;}
+ const live=s.state==='running';
+ PWR.textContent=live?'stop stream':'start stream';
+ PWR.classList.toggle('off',!live);
+ LIVE.style.display=live?'':'none';
+ OFF.style.display=live?'none':'flex';
+ // reconnect the MJPEG socket on restart; drop it when the camera goes away
+ if(live&&!wasLive)LIVE.src='/stream?t='+Date.now();
+ if(!live&&wasLive)LIVE.removeAttribute('src');
+ wasLive=live;
+ if(!live){
+  OFF.textContent=s.state==='error'?'CAMERA ERROR':
+   (s.state==='starting'?'STARTING...':'CAMERA OFF');
+  OFF.classList.toggle('bad',s.state==='error');
+  S.textContent=s.error||(s.state==='starting'?'starting camera...'
+   :'stream stopped \u2014 camera released');
+  S.style.color=s.state==='error'?'#e66':'#686';
+  return;}
  S.style.color='';
  S.textContent=`${s.fps.toFixed(1)} fps | yolo ${s.yolo?('every '+s.detect_every):'off'} | focus dac ${s.focus_dac??'?'}`;
  document.getElementById('rate').value=s.detect_every;
@@ -231,60 +263,121 @@ class Camera:
         self.boxes = []           # [(x1,y1,x2,y2,label)] from last detection
         self.focuser = None
         self.focus_dac = None
-        self.cam_error = None     # set => degraded mode: gallery/status only
+        self.cam_error = None
         self.af_lock = threading.Lock()
-        self._af_started = False
+        # want_on is the request, state is reality. Turning the stream off
+        # releases the pipeline outright, which unpowers the sensor and frees
+        # the camera for snap.sh without stopping the service.
+        self.want_on = True
+        self.state = "off"        # off | starting | running | error
         threading.Thread(target=self._run, daemon=True).start()
+
+    def set_on(self, on):
+        """Ask the capture loop to start or stop; returns immediately."""
+        self.want_on = bool(on)
+        if self.want_on:
+            self.cam_error = None
+        return self.want_on
 
     # ---------- capture loop ----------
 
-    def _run(self):
-        # Open the camera FIRST — fail fast and explicitly, before the slow
-        # model import. isOpened() is NOT the test: the GStreamer pipeline
-        # constructs fine even when Argus refuses the capture session (seen
-        # 2026-08-07: "Failed to create CaptureSession" with isOpened()==True).
-        # The only honest signal is a real frame arriving. CSI is not
-        # hot-pluggable, so a missing camera stays missing until a powered-off
-        # reconnect: degrade, don't retry.
+    def _open(self):
+        """Open the pipeline and prove it by waiting for a real frame.
+
+        isOpened() is NOT the test: the pipeline constructs fine even when
+        Argus refuses the capture session (seen 2026-08-07, isOpened()==True
+        with "Failed to create CaptureSession"). A frame arriving is the only
+        honest signal.
+        """
         cap = cv2.VideoCapture(GST, cv2.CAP_GSTREAMER)
-        got_frame = False
         if cap.isOpened():
             t0 = time.time()
             while time.time() - t0 < 6:
                 ok, _ = cap.read()
                 if ok:
-                    got_frame = True
-                    break
+                    return cap
                 time.sleep(0.2)
-        if not got_frame:
-            cap.release()
-            if os.path.exists("/dev/video0"):
-                self.cam_error = ("camera present but no frames — another "
-                                  "pipeline owns it (systemctl status liveview, "
-                                  "or a stray gst-launch)")
-            else:
-                self.cam_error = ("no camera connected — /dev/video0 missing. "
-                                  "Power off to reconnect the CSI ribbon, "
-                                  "then reboot.")
-            print(f"[hub] DEGRADED: {self.cam_error}")
-            return  # server keeps serving gallery + status
-        if self.use_yolo:
-            from ultralytics import YOLO  # slow import — keep off main thread
-            self.model = YOLO("/home/paul/yolo11n.pt")
-            print("[hub] YOLO loaded")
-        self.focuser = Focuser()
-        self.focuser.init()
-        print("[hub] camera open, serving")
-        n = 0
-        t_last = time.time()
+        cap.release()
+        return None
+
+    def _run(self):
         while True:
+            if not self.want_on:
+                # Don't clobber an error we already reported — "off" means the
+                # user stopped it, "error" means it broke. The page shows them
+                # differently and that distinction has to survive this loop.
+                self.state = "error" if self.cam_error else "off"
+                time.sleep(0.2)
+                continue
+
+            self.state = "starting"
+            cap = self._open()
+            if cap is None:
+                if os.path.exists("/dev/video0"):
+                    self.cam_error = ("camera present but no frames — another "
+                                      "pipeline owns it, or the sensor is off "
+                                      "the CSI bus")
+                else:
+                    self.cam_error = ("no camera connected — /dev/video0 "
+                                      "missing. Power off to reconnect the CSI "
+                                      "ribbon, then reboot.")
+                print(f"[hub] open failed: {self.cam_error}")
+                # CSI is not hot-pluggable — don't spin retrying. Park in error
+                # and wait to be asked again.
+                self.state = "error"
+                self.want_on = False
+                continue
+
+            if self.use_yolo and self.model is None:
+                from ultralytics import YOLO  # slow import, once per process
+                self.model = YOLO("/home/paul/yolo11n.pt")
+                print("[hub] YOLO loaded")
+            # The VCM sits on the sensor's streaming rail: it exists only while
+            # this pipeline does, so re-init the focuser on every start.
+            self.focuser = Focuser()
+            self.focuser.init()
+            self.focus_dac = None
+            self.cam_error = None
+            self.state = "running"
+            print("[hub] camera open, serving")
+
+            self._capture(cap)
+
+            cap.release()
+            self.focuser = None
+            self.focus_dac = None
+            self.fps = 0.0
+            with self.lock:
+                self.lock.notify_all()   # release anyone blocked on a frame
+            self.state = "error" if self.cam_error else "off"
+            print(f"[hub] camera released ({self.state})")
+
+    def _capture(self, cap):
+        """Frame loop. Returns when the stream is stopped or the feed dies."""
+        n = 0
+        af_done = False
+        misses = 0
+        t_last = time.time()
+        while self.want_on:
             ok, frame = cap.read()
             if not ok:
+                # A dead sensor reads False forever. Without this counter the
+                # loop spins silently and the page keeps reporting the last
+                # fps it ever saw — exactly what hid a 23-hour outage on
+                # 2026-08-23.
+                misses += 1
+                if misses > 100:      # ~5 s of nothing
+                    self.cam_error = ("frames stopped — the sensor dropped off "
+                                      "the CSI bus (reseat the ribbon)")
+                    print(f"[hub] {self.cam_error}")
+                    self.want_on = False
+                    return
                 time.sleep(0.05)
                 continue
+            misses = 0
             n += 1
-            if n == 15 and not self._af_started:  # startup AF, once frames flow
-                self._af_started = True
+            if n == 15 and not af_done:   # AF once per start, once frames flow
+                af_done = True
                 threading.Thread(target=self.autofocus, daemon=True).start()
 
             if self.model is not None and n % max(self.detect_every, 1) == 0:
@@ -502,6 +595,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _need_camera(self):
+        """Reason the camera can't serve right now, or None if it can."""
+        if CAM.state == "running":
+            return None
+        if CAM.cam_error:
+            return CAM.cam_error
+        return "camera is off — start the stream first"
+
     def do_GET(self):
         url = urlparse(self.path)
         q = parse_qs(url.query)
@@ -511,14 +612,18 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, "text/html", PAGE.encode())
 
         elif path == "/frame.jpg":
+            err = self._need_camera()
+            if err:
+                return self._send(503, "text/plain", err.encode())
             data = CAM.next_jpeg()
             if data is None:
                 return self._send(503, "text/plain", b"no frame yet")
             self._send(200, "image/jpeg", data)
 
         elif path == "/snap":
-            if CAM.cam_error:
-                return self._send(503, "text/plain", CAM.cam_error.encode())
+            err = self._need_camera()
+            if err:
+                return self._send(503, "text/plain", err.encode())
             p = CAM.snap()
             self._send(200 if p else 503, "text/plain",
                        f"saved {os.path.basename(p)}".encode() if p
@@ -530,9 +635,16 @@ class Handler(BaseHTTPRequestHandler):
                 "detect_every": CAM.detect_every,
                 "yolo": CAM.model is not None,
                 "focus_dac": CAM.focus_dac,
-                "camera": CAM.cam_error is None,
+                "state": CAM.state,
+                "camera": CAM.state == "running",
                 "error": CAM.cam_error,
             }).encode())
+
+        elif path == "/api/camera":
+            want = q.get("on", ["1"])[0] not in ("0", "false", "off")
+            CAM.set_on(want)
+            self._send(200, "text/plain",
+                       b"starting camera..." if want else b"stream stopped")
 
         elif path == "/api/set":
             try:
@@ -543,16 +655,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, "text/plain", b"?detect_every=1..60")
 
         elif path == "/api/af":
-            if CAM.cam_error:
-                return self._send(503, "text/plain", CAM.cam_error.encode())
+            err = self._need_camera()
+            if err:
+                return self._send(503, "text/plain", err.encode())
             best = CAM.autofocus()
             self._send(200, "text/plain",
                        f"focused: dac {best}".encode() if best is not None
                        else b"autofocus already running")
 
         elif path == "/api/focus":
-            if CAM.cam_error:
-                return self._send(503, "text/plain", CAM.cam_error.encode())
+            err = self._need_camera()
+            if err:
+                return self._send(503, "text/plain", err.encode())
             try:
                 dac = max(0, min(4095, int(q["dac"][0])))
                 self._send(200, "text/plain",
@@ -570,8 +684,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, "application/json", json.dumps(VIT.data).encode())
 
         elif path == "/api/analyze":
-            if CAM.cam_error:
-                return self._send(503, "text/plain", CAM.cam_error.encode())
+            err = self._need_camera()
+            if err:
+                return self._send(503, "text/plain", err.encode())
             try:
                 text, name = analyze_scene()
                 self._send(200, "application/json", json.dumps(
@@ -599,12 +714,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, "image/jpeg", f.read())
 
         elif path == "/stream":
+            err = self._need_camera()
+            if err:
+                return self._send(503, "text/plain", err.encode())
             self.send_response(200)
             self.send_header("Content-Type",
                              "multipart/x-mixed-replace; boundary=frame")
             self.end_headers()
             try:
-                while True:
+                while CAM.state == "running":   # ends cleanly when stopped
                     data = CAM.next_jpeg()
                     if data is None:
                         continue
