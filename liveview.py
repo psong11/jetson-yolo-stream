@@ -59,6 +59,8 @@ from focuser import Focuser, tenengrad
 
 SNAPDIR = os.path.expanduser("~/snapshots")
 PHI = 0.6180339887
+STALE_S = 5.0     # no new frame this long while "running" = feed is dead
+WEDGE_S = 25.0    # still dead this long after a reopen = thread is stuck
 
 GST = (
     "nvarguscamerasrc ! "
@@ -69,6 +71,7 @@ GST = (
 )
 
 PAGE = """<!doctype html><html><head><title>jetson cam hub</title>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 *{box-sizing:border-box}
@@ -225,7 +228,7 @@ function poll(){fetch('/api/status').then(r=>r.json()).then(s=>{
   S.style.color=s.state==='error'?'#e66':'#686';
   return;}
  S.style.color='';
- S.textContent=`${s.fps.toFixed(1)} fps | yolo ${s.yolo?('every '+s.detect_every):'off'} | focus dac ${s.focus_dac??'?'}`;
+ S.textContent=`${s.fps.toFixed(1)} fps | yolo ${s.yolo?('every '+s.detect_every):'off'} | focus dac ${s.focus_dac??'?'}`+(s.restarts?` | recovered ${s.restarts}x`:'');
  document.getElementById('rate').value=s.detect_every;
  if(s.focus_dac!=null&&document.activeElement!==D){D.value=s.focus_dac;DV.textContent=s.focus_dac;}
 }).catch(()=>{});}
@@ -270,7 +273,13 @@ class Camera:
         # the camera for snap.sh without stopping the service.
         self.want_on = True
         self.state = "off"        # off | starting | running | error
+        self.last_frame_t = time.time()
+        self.stale_since = None
+        self.restarts = 0         # times the watchdog revived the pipeline
+        self._restart_req = False
+        self._restart_log = []    # timestamps, for thrash protection
         threading.Thread(target=self._run, daemon=True).start()
+        threading.Thread(target=self._watchdog, daemon=True).start()
 
     def set_on(self, on):
         """Ask the capture loop to start or stop; returns immediately."""
@@ -338,6 +347,8 @@ class Camera:
             self.focuser.init()
             self.focus_dac = None
             self.cam_error = None
+            self.last_frame_t = time.time()   # before "running", or the
+            self.stale_since = None           # watchdog fires instantly
             self.state = "running"
             print("[hub] camera open, serving")
 
@@ -349,6 +360,11 @@ class Camera:
             self.fps = 0.0
             with self.lock:
                 self.lock.notify_all()   # release anyone blocked on a frame
+            if self._restart_req:
+                self._restart_req = False
+                self.cam_error = None
+                print("[hub] reopening pipeline (watchdog)")
+                continue          # want_on is still true -> straight back up
             self.state = "error" if self.cam_error else "off"
             print(f"[hub] camera released ({self.state})")
 
@@ -358,7 +374,7 @@ class Camera:
         af_done = False
         misses = 0
         t_last = time.time()
-        while self.want_on:
+        while self.want_on and not self._restart_req:
             ok, frame = cap.read()
             if not ok:
                 # A dead sensor reads False forever. Without this counter the
@@ -367,10 +383,8 @@ class Camera:
                 # 2026-08-23.
                 misses += 1
                 if misses > 100:      # ~5 s of nothing
-                    self.cam_error = ("frames stopped — the sensor dropped off "
-                                      "the CSI bus (reseat the ribbon)")
-                    print(f"[hub] {self.cam_error}")
-                    self.want_on = False
+                    self._request_restart("frames stopped, sensor off the "
+                                          "CSI bus")
                     return
                 time.sleep(0.05)
                 continue
@@ -400,10 +414,71 @@ class Camera:
             now = time.time()
             self.fps = 0.9 * self.fps + 0.1 / max(now - t_last, 1e-3)
             t_last = now
+            self.last_frame_t = now       # the watchdog reads this
             with self.lock:
                 self.jpeg = buf.tobytes()
                 self.raw = frame
                 self.lock.notify_all()
+
+    def _request_restart(self, reason):
+        """Ask the capture loop to reopen the pipeline; refuse if thrashing.
+
+        A camera that opens, dies, opens, dies is not being fixed by us — it
+        needs hands on the ribbon. Five attempts in five minutes and we stop,
+        leave the reason on the page, and wait to be asked again. Same shape as
+        the limit in the systemd unit, for the same reason: automatic recovery
+        must not turn a hardware fault into an invisible loop.
+        """
+        now = time.time()
+        self._restart_log = [t for t in self._restart_log if now - t < 300]
+        if len(self._restart_log) >= 5:
+            self.cam_error = (f"{reason}. Five recoveries in five minutes all "
+                              "failed \u2014 this is physical. Reseat the CSI "
+                              "ribbon, then start the stream again.")
+            print(f"[watchdog] giving up: {self.cam_error}")
+            self._restart_req = False
+            self.want_on = False
+            return False
+        self._restart_log.append(now)
+        self.restarts += 1
+        self.cam_error = f"{reason} \u2014 reopening (recovery #{self.restarts})"
+        print(f"[watchdog] {self.cam_error}")
+        self._restart_req = True
+        return True
+
+    # ---------- watchdog ----------
+
+    def _watchdog(self):
+        """Independent staleness check, running beside the capture thread.
+
+        The capture thread cannot police itself: if cap.read() blocks on a
+        sensor that stopped talking, the thread that would notice the silence
+        is the one that's stuck. So this only watches a clock.
+
+        Two escalating moves. First ask the capture loop to tear the pipeline
+        down and reopen it — that covers a sensor that dropped off the CSI bus
+        and comes back, which is what a service restart does by hand. If the
+        thread is wedged inside a blocking read and never even acknowledges
+        that, exit the process: systemd restarts us cleanly, and its 5-tries-
+        in-5-minutes limit means a genuinely dead camera ends up "failed" and
+        visible instead of thrashing forever.
+        """
+        while True:
+            time.sleep(1.0)
+            if self.state != "running":
+                self.stale_since = None
+                continue
+            age = time.time() - self.last_frame_t
+            if age < STALE_S:
+                self.stale_since = None
+                continue
+            if self.stale_since is None:
+                self.stale_since = time.time()
+                self._request_restart(f"no frames for {age:.0f}s")
+            elif time.time() - self.stale_since > WEDGE_S:
+                print("[watchdog] capture thread wedged in read() \u2014 "
+                      "exiting for a clean systemd restart", flush=True)
+                os._exit(1)
 
     # ---------- frame access ----------
 
@@ -454,6 +529,10 @@ class Camera:
                 dac = int(dac)
                 if dac in cache:
                     return cache[dac]
+                # The watchdog can tear the pipeline down underneath us; the
+                # focuser vanishes with it (VCM is on the streaming rail).
+                if self.state != "running" or self.focuser is None:
+                    raise RuntimeError("pipeline restarted during autofocus")
                 self.focuser.set_position(dac)
                 time.sleep(0.25)
                 frame = self.fresh_raw()
@@ -479,8 +558,8 @@ class Camera:
             print(f"[hub] AF: dac={best} ({len(cache)} probes, "
                   f"{time.time() - t0:.1f}s)")
             return best
-        except RuntimeError as e:
-            print(f"[hub] AF failed: {e}")
+        except (RuntimeError, AttributeError) as e:
+            print(f"[hub] AF aborted: {e}")
             return None
         finally:
             self.af_lock.release()
@@ -591,6 +670,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send(self, code, ctype, body):
         self.send_response(code)
+        # Without an explicit charset browsers fall back to latin-1 and every
+        # em-dash in our own error strings renders as mojibake.
+        if ctype.startswith("text/") or ctype == "application/json":
+            ctype += "; charset=utf-8"
         self.send_header("Content-Type", ctype)
         self.end_headers()
         self.wfile.write(body)
@@ -636,6 +719,9 @@ class Handler(BaseHTTPRequestHandler):
                 "yolo": CAM.model is not None,
                 "focus_dac": CAM.focus_dac,
                 "state": CAM.state,
+                "restarts": CAM.restarts,
+                "frame_age": (round(time.time() - CAM.last_frame_t, 1)
+                              if CAM.state == "running" else None),
                 "camera": CAM.state == "running",
                 "error": CAM.cam_error,
             }).encode())

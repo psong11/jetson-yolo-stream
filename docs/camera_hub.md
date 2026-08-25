@@ -38,7 +38,8 @@ Work down this list; each step tells you which layer failed.
 | 1. Is the Jetson up? | `ping -c1 jetson.local` | No reply → power/network, not the hub |
 | 2. Is the service up? | `sudo systemctl status liveview` | `failed` → read the journal; `inactive` → someone stopped it |
 | 3. Why did it die? | `journalctl -u liveview -n 50` | Python traceback, or Argus errors |
-| 4. Is the camera alive? | `curl -s jetson.local:8080/api/status` | `"camera": false` → degraded, see below |
+| 4. Is the camera alive? | `curl -s jetson.local:8080/api/status` | `state` tells you: `off` (someone stopped it), `error` (read the reason), `running` |
+| 5. Is it silently stale? | same, check `frame_age` | Should be < 0.2 s. The watchdog now catches this, but the field is the ground truth |
 
 **Boot logs are stamped 1969.** The Jetson has no battery-backed clock: it boots
 at the epoch and jumps to real time when NTP syncs, ~40 s in. So the service's
@@ -55,18 +56,71 @@ a *real* failure — read the journal.
 
 ---
 
+## Starting and stopping the stream
+
+The page has a **stop stream / start stream** button; the endpoint is
+`/api/camera?on=0` / `on=1`. Stopping releases the pipeline outright — the
+sensor and its focus motor lose power and the camera is free for other
+programs. The service keeps running: gallery, vitals, and status still serve.
+
+Stopping does *not* protect the ribbon cable. Data doesn't wear out wiring; CSI
+is designed for continuous streaming. What idling actually buys: less heat, a
+few watts, no one on the tailnet watching your room, and a free camera for
+manual capture.
+
+While the stream is off, every camera endpoint (`/snap`, `/api/af`,
+`/api/focus`, `/api/analyze`, `/frame.jpg`, `/stream`) returns 503 with a
+reason rather than pretending.
+
+---
+
+## The watchdog
+
+A separate thread watches one number: how long since the last frame arrived.
+The capture thread cannot do this job itself — if `cap.read()` blocks on a
+sensor that stopped talking, the thread that would notice the silence is the
+one that's stuck.
+
+It escalates in three steps:
+
+| After | It does | Because |
+|---|---|---|
+| 5 s of no frames | Tears down the pipeline and reopens it | Same move as a service restart, which is known to revive this camera |
+| 25 s more, still nothing | `os._exit(1)` | The capture thread is wedged in a blocking read; systemd restarts the process cleanly |
+| 5 recoveries in 5 min | Gives up, page shows the reason | Open/die/open/die is a hardware fault, and looping on it would hide the problem |
+
+`/api/status` reports `restarts` and `frame_age`; the page shows
+`recovered Nx` once it has happened. A rising recovery count is a signal to
+reseat the ribbon, not a sign that things are fine.
+
+**Verified 2026-08-24** against a simulated camera: detected a dead feed in 2 s,
+reopened on a fresh pipeline, and after five forced failures stopped and
+reported `this is physical`.
+
+---
+
 ## Only one program can use the camera
 
 Argus allows a single capture session. While the service runs, it holds it, and
 `snap.sh` will refuse to start. For manual capture work:
 
 ```bash
-sudo systemctl stop liveview
+curl -s 'http://localhost:8080/api/camera?on=0'   # release the camera
 ~/snap.sh                          # or gst-launch, camcheck.sh, focus sweeps
+curl -s 'http://localhost:8080/api/camera?on=1'   # give it back
+```
+
+`snap.sh` checks this itself and refuses only while the stream is actually
+running. Stopping the whole service still works and is the bigger hammer:
+
+```bash
+sudo systemctl stop liveview
+~/snap.sh
 sudo systemctl start liveview
 ```
 
-Forgetting the `start` is the easy mistake — the site stays down until you do.
+Forgetting to turn it back on is the easy mistake — the page will sit at
+CAMERA OFF until you do.
 
 ---
 
@@ -100,6 +154,7 @@ when Argus refuses the session. The hub probes for a real frame (6 s) instead.
 | `/snap` | Save the clean current frame → `~/snapshots/live_<ts>.jpg` |
 | `/api/status` | fps, detect_every, yolo, focus_dac, camera, error |
 | `/api/vitals` | gpu, cpu, ram, temp, watts (parsed from `tegrastats`) |
+| `/api/camera?on=0\|1` | Stop or start the stream (off releases the camera) |
 | `/api/set?detect_every=N` | Run YOLO every Nth frame, 1–60, live |
 | `/api/af` | Golden-section autofocus (~6 s), returns best DAC |
 | `/api/focus?dac=N` | Move the lens directly, 0–4095 |
